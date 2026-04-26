@@ -43,3 +43,24 @@ This command runs Python-based validation scenarios mapped to the business-case 
 Python test execution also generates:
 
 - `python_tests/BUSINESS_CASE_RESULTS.md`
+
+## Security Controls (Java Runtime)
+
+The switch now enforces request security in Java runtime flow (jPOS + Q2):
+
+- Request MAC validation (field `64`)
+- Tamper detection (payload mutation after MAC)
+- PIN block format integrity check (field `52`)
+- DUKPT-derived working key usage (field `62`)
+- Security decline response (`RC=96`) on invalid/missing security data
+- Response MAC generation for valid secure requests
+
+Security logic is implemented in:
+
+- `src/main/java/com/switch/service/SecurityService.java`
+- `src/main/java/com/switch/listener/SwitchListener.java`
+
+Security tests are covered by:
+
+- `src/test/java/com/switch/service/SecurityServiceTest.java`
+- `src/test/java/com/switch/listener/SwitchListenerTest.java`

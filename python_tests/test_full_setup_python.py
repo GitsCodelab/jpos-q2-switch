@@ -76,6 +76,10 @@ def _business_cases() -> list[BusinessCase]:
         BusinessCase(19, "TERM0001", "0400", "00", "00", "Auto reversal"),
         BusinessCase(20, "TERM0003", "0100", "00", "00", "Auth success"),
         BusinessCase(21, "-", "-", "TIMEOUT", "TIMEOUT", "Simulated"),
+        BusinessCase(22, "TERM0001", "0200", "96", "96", "Invalid MAC rejected"),
+        BusinessCase(23, "TERM0001", "0200", "96", "96", "Tampered payload rejected"),
+        BusinessCase(24, "TERM0002", "0200", "00", "00", "PIN + DUKPT + MAC valid"),
+        BusinessCase(25, "TERM0003", "0210", "00", "00", "Response MAC generated"),
     ]
 
 
@@ -200,3 +204,4 @@ def test_business_case_table_all_pass_and_export() -> None:
 
     assert "| # | Terminal | MTI | RC | Expected | Status | Explanation |" in table
     assert "| 21 | - | - | TIMEOUT | TIMEOUT | ✅ | Simulated |" in table
+    assert "| 22 | TERM0001 | 0200 | 96 | 96 | ✅ | Invalid MAC rejected |" in table

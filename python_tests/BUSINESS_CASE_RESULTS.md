@@ -21,3 +21,7 @@
 | 19 | TERM0001 | 0400 | 00 | 00 | ✅ | Auto reversal |
 | 20 | TERM0003 | 0100 | 00 | 00 | ✅ | Auth success |
 | 21 | - | - | TIMEOUT | TIMEOUT | ✅ | Simulated |
+| 22 | TERM0001 | 0200 | 96 | 96 | ✅ | Invalid MAC rejected |
+| 23 | TERM0001 | 0200 | 96 | 96 | ✅ | Tampered payload rejected |
+| 24 | TERM0002 | 0200 | 00 | 00 | ✅ | PIN + DUKPT + MAC valid |
+| 25 | TERM0003 | 0210 | 00 | 00 | ✅ | Response MAC generated |
