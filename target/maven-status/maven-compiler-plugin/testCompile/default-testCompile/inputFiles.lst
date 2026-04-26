@@ -1,9 +1,0 @@
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/service/STANServiceTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/util/MacUtilTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/dao/EventDAOTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/listener/SwitchListenerTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/util/DukptUtilTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/dao/TransactionDAOTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/service/TransactionServiceTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/service/ReversalServiceTest.java
-/home/samehabib/jpos-q2-switch/src/test/java/com/switch/service/RRNServiceTest.java
