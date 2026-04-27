@@ -1,0 +1,228 @@
+# Plan 2 — jPOS Routing to SmartVista FE (SVFE)
+
+## 🎯 Objective
+
+Enable the jPOS switch to **route ISO8583 messages to SmartVista FE (SVFE)** while maintaining control over:
+
+* logging
+* validation
+* lifecycle
+* persistence (future integration)
+
+This allows **safe migration and parallel run** without disrupting production.
+
+---
+
+## 🧠 Concept
+
+jPOS acts as a **gateway / proxy switch**:
+
+```text
+ATM → jPOS → SVFE → Host / Scheme
+```
+
+* jPOS receives ISO message
+* jPOS optionally validates/enriches
+* jPOS forwards message to SVFE
+* SVFE processes and returns response
+* jPOS relays response back to ATM
+
+---
+
+## 🔑 Core Component — MUX
+
+MUX (Multiplexer) is responsible for:
+
+* sending ISO request
+* waiting for response
+* matching response using STAN (field 11)
+* returning correct response
+
+### Flow
+
+```text
+request → MUX → SVFE
+               ↓
+            response
+               ↓
+        MUX matches (by STAN)
+               ↓
+        return to jPOS
+```
+
+---
+
+## 🧱 Architecture
+
+```text
+ATM
+ ↓
+jPOS Switch
+ ├── Validation
+ ├── Logging
+ ├── Persistence (future)
+ └── Routing Logic
+        ↓
+      MUX
+        ↓
+   SVFE Channel
+        ↓
+   SmartVista FE
+```
+
+---
+
+## 🔌 jPOS Configuration
+
+### 1. Channel (Connection to SVFE)
+
+```xml
+<channel name="svfe-channel"
+         class="org.jpos.iso.channel.ASCIIChannel"
+         packager="cfg/iso87.xml"
+         host="SVFE_IP"
+         port="SVFE_PORT"
+         connect-timeout="30000"/>
+```
+
+---
+
+### 2. MUX Configuration
+
+```xml
+<mux name="svfe-mux" class="org.jpos.q2.iso.QMUX">
+    <in>svfe-channel</in>
+    <out>svfe-channel</out>
+    <timeout>30000</timeout>
+</mux>
+```
+
+---
+
+## 💻 Java Integration
+
+### Basic Forwarding
+
+```java
+ISOMsg response = mux.request(request, 30000);
+
+if (response == null) {
+    throw new ISOException("SVFE timeout");
+}
+
+return response;
+```
+
+---
+
+## 🧠 Routing Logic (Recommended)
+
+```java
+if (isOnUs(request)) {
+    return processLocally(request);
+} else {
+    return mux.request(request, 30000);
+}
+```
+
+---
+
+## ⚠️ Critical Rules
+
+### 1. Preserve Message Integrity
+
+* Do NOT modify fields incorrectly
+* Maintain STAN (field 11)
+* Maintain RRN (field 37)
+
+---
+
+### 2. Handle Timeouts
+
+```java
+if (response == null) {
+    triggerReversal();
+}
+```
+
+---
+
+### 3. Logging (Mandatory)
+
+Log:
+
+* outbound request to SVFE
+* inbound response
+* latency
+* RC (response code)
+
+---
+
+### 4. MAC / Security
+
+* Ensure MAC is valid before forwarding
+* Do not break MAC unless recalculated
+
+---
+
+## 🧪 Use Cases
+
+### 🟢 Parallel Run
+
+* jPOS runs alongside SVFE
+* compares behavior
+
+### 🟢 Migration Phase
+
+* gradually route terminals to jPOS
+
+### 🟢 Validation
+
+* ensure correctness before full cutover
+
+---
+
+## 🚀 Benefits
+
+* zero-risk migration
+* real production traffic validation
+* full visibility and logging
+* foundation for replacing SVFE
+
+---
+
+## 🏁 When to Use This Plan
+
+Use Plan 2 when:
+
+* switch core is stable ✔
+* persistence layer is implemented ✔
+* you want to start migration from SmartVista ✔
+
+---
+
+## 🔴 Do NOT Use Yet If
+
+* no persistence
+* no reversal reliability
+* no audit trail
+
+---
+
+## 📌 Final Insight
+
+> This approach bridges:
+>
+> SmartVista (current system)
+> → jPOS (new switch)
+
+---
+
+## 📍 Next Phase After Plan 2
+
+* Persistence integration
+* Reconciliation engine
+* Scheme connection
+* Full cutover
+
+---
