@@ -16,7 +16,7 @@
 
 | Area             | What to Test        | Example        | Expected Result      | Priority | Status |
 | ---------------- | ------------------- | -------------- | -------------------- | -------- | ------ |
-| MAC Validation   | ANSI X9.19          | Field 64       | Reject invalid MAC   | 🔴 High  | PASS   |
+| MAC Validation   | HMAC-SHA256         | Field 64       | Reject invalid MAC   | 🔴 High  | PASS   |
 | MAC Generation   | Response MAC        | 0210 response  | Correct MAC returned | 🔴 High  | PASS   |
 | DUKPT Derivation | Key per transaction | Field 62 (KSN) | Correct key derived  | 🔴 High  | PASS   |
 | PIN Block        | ISO-0 format        | Field 52       | Valid PIN processing | 🔴 High  | PASS   |
