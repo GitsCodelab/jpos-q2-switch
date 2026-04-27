@@ -5,6 +5,8 @@ services:
       dockerfile: docker/Dockerfile
     image: jpos-q2-switch:latest
     container_name: jpos-q2-switch
+    environment:
+      BASE_DERIVATION_KEY: 0123456789ABCDEFFEDCBA9876543210
     ports:
       - "9000:9000"
     volumes:

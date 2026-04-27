@@ -30,6 +30,17 @@ mvn clean package
 
 The package phase writes `lib/switch-core.jar`.
 
+To run full validation in Docker without creating root-owned artifacts in the workspace:
+
+```bash
+bash docker/run-tests-docker.sh
+```
+
+This script runs containers with your host UID/GID and executes:
+
+- `mvn -q clean test`
+- `python3 -m pytest -q python_tests`
+
 ## Python Test Layer (Validation Only)
 
 Business logic remains in Java (jPOS + Q2). Python is used only to validate setup and business-case expectations.
