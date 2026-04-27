@@ -10,8 +10,8 @@
     <name>jpos-q2-switch</name>
 
     <properties>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.jupiter.version>5.11.2</junit.jupiter.version>
         <jposee.version>2.2.10</jposee.version>
@@ -57,7 +57,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.14.0</version>
                 <configuration>
-                    <release>21</release>
+                    <release>25</release>
                 </configuration>
             </plugin>
 
