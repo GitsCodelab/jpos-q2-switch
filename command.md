@@ -148,3 +148,12 @@ mvn -q test && pkill -f 'org.jpos.q2.Q2' || true && : > logs/q2.log && nohup jav
 
 
 cd /home/samehabib/jpos-q2-switch && pkill -f 'org.jpos.q2.Q2' || true && fuser -k 9000/tcp || true && ss -ltnp '( sport = :9000 )' || true
+
+
+cd /home/samehabib/jpos-q2-switch
+pkill -f 'org.jpos.q2.Q2' || true
+fuser -k 9000/tcp || true
+docker compose down --remove-orphans
+docker compose up --build -d
+docker compose ps
+docker compose logs -f switch

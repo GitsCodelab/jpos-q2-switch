@@ -40,6 +40,22 @@ cd /home/samehabib/jpos-q2-switch
 docker compose up --build
 ```
 
+If startup fails with `bind: address already in use` on port `9000`, stop local Q2/Java listeners first:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+pkill -f 'org.jpos.q2.Q2' || true
+fuser -k 9000/tcp || true
+docker compose down --remove-orphans
+```
+
+Then run:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose up --build -d
+```
+
 Start it in the background:
 
 ```bash
