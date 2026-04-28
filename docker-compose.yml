@@ -7,6 +7,7 @@ services:
     container_name: jpos-q2-switch
     environment:
       BASE_DERIVATION_KEY: 0123456789ABCDEFFEDCBA9876543210
+      JAVA_OPTS: -Dswitch.listener.debug=true
     ports:
       - "9000:9000"
     volumes:

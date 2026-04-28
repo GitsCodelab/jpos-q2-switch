@@ -3,11 +3,18 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import shutil
+import socket
 import subprocess
+import tempfile
+import textwrap
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import xml.etree.ElementTree as ET
+
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +46,22 @@ def _read(path: str) -> str:
         The decoded UTF-8 text content of the file.
     """
     return (PROJECT_ROOT / path).read_text(encoding="utf-8")
+
+
+def _is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _java_classpath() -> str:
+    cp_file = PROJECT_ROOT / ".cp.txt"
+    if not cp_file.exists():
+        raise FileNotFoundError(".cp.txt not found. Build once with Maven first.")
+    deps = cp_file.read_text(encoding="utf-8").strip()
+    return f"{deps}:target/classes"
 
 
 def _xml_is_well_formed(path: str) -> bool:
@@ -526,3 +549,90 @@ def test_business_case_table_all_pass_and_export() -> None:
     assert "Robustness: incomplete security rejected" in table
     assert "Replay Protection" in areas
     assert "Robustness" in areas
+
+
+def test_pytest_generates_runtime_iso_io_logs() -> None:
+    """Send one ISO message via jPOS ASCIIChannel so pytest produces runtime Q2 logs.
+
+    This test is intentionally integration-level and requires Q2 to be running on
+    localhost:9000. It compiles and runs a tiny Java probe that uses jPOS APIs
+    to ensure channel framing is correct (unlike telnet/netcat raw text input).
+    """
+    q2_log = PROJECT_ROOT / "logs" / "q2.log"
+
+    if not _is_port_open("127.0.0.1", 9000):
+        pytest.skip("Q2 is not listening on 127.0.0.1:9000")
+
+    if shutil.which("javac") is None or shutil.which("java") is None:
+        pytest.skip("javac/java not available in PATH")
+
+    before = q2_log.read_text(encoding="utf-8", errors="ignore") if q2_log.exists() else ""
+
+    java_src = textwrap.dedent(
+        """
+        import org.jpos.iso.ISOMsg;
+        import org.jpos.iso.ISOUtil;
+        import org.jpos.iso.channel.ASCIIChannel;
+        import org.jpos.iso.packager.GenericPackager;
+
+        public class PyIsoProbe {
+            public static void main(String[] args) throws Exception {
+                GenericPackager p = new GenericPackager("cfg/iso87.xml");
+                ASCIIChannel ch = new ASCIIChannel("127.0.0.1", 9000, p);
+                ch.connect();
+
+                ISOMsg m = new ISOMsg();
+                m.setPackager(p);
+                m.setMTI("0200");
+                m.set(3, "000000");
+                m.set(4, "000000000100");
+                m.set(11, "123456");
+                m.set(37, "123456789012");
+                m.set(41, "TERM0001");
+                // Intentionally provide only field 52 security data to trigger
+                // an immediate 96 response from SecurityService (no 30s MUX wait).
+                m.set(52, ISOUtil.hex2byte("0123456789ABCDE0"));
+
+                ch.send(m);
+                ISOMsg r = ch.receive();
+                System.out.println("RESP_MTI=" + r.getMTI());
+                System.out.println("RESP_39=" + r.getString(39));
+                ch.disconnect();
+            }
+        }
+        """
+    ).strip()
+
+    with tempfile.TemporaryDirectory(prefix="pyiso-probe-") as tmp:
+        src = Path(tmp) / "PyIsoProbe.java"
+        src.write_text(java_src, encoding="utf-8")
+
+        cp = _java_classpath()
+        compile_run = subprocess.run(
+            ["javac", "-cp", cp, str(src)],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert compile_run.returncode == 0, compile_run.stderr or compile_run.stdout
+
+        run = subprocess.run(
+            ["java", "-cp", f"{cp}:{tmp}", "PyIsoProbe"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr or run.stdout
+        assert "RESP_MTI=0210" in run.stdout
+        assert "RESP_39=96" in run.stdout
+
+    # Give logger a brief moment to flush session lines.
+    time.sleep(0.5)
+
+    after = q2_log.read_text(encoding="utf-8", errors="ignore") if q2_log.exists() else ""
+    delta = after[len(before):] if len(after) >= len(before) else after
+
+    assert "session-start" in delta or "session-start" in after
+    assert "session-end" in delta or "session-end" in after

@@ -5,4 +5,5 @@
         <property name="packager-config" value="cfg/iso87.xml"/>
     </channel>
     <request-listener class="com.qswitch.listener.SwitchListener"/>
+    <!-- <request-listener class="com.qswitch.listener.SwitchListener"/> -->
 </server>

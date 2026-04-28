@@ -31,6 +31,57 @@ mvn clean package
 
 The package phase writes `lib/switch-core.jar`.
 
+## Docker Compose
+
+Start the switch with Docker Compose:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose up --build
+```
+
+Start it in the background:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose up --build -d
+```
+
+Check container status:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose ps
+```
+
+Follow logs:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose logs -f switch
+```
+
+Stop everything:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose down
+```
+
+Notes:
+
+- The Docker image builds the Maven project inside the container, so the first `docker compose up --build` can take a few minutes.
+- Docker Compose is configured to pass JVM flags through `JAVA_OPTS`.
+- HEX logging is currently enabled in `docker-compose.yml` with `JAVA_OPTS: -Dswitch.listener.debug=true`.
+- With HEX logging enabled, the switch logs summary lines, a safe ISO dump, and raw packed ISO HEX.
+- Raw HEX can include sensitive data. Turn it off outside troubleshooting.
+
+To disable HEX logging, edit `docker-compose.yml` and clear the `JAVA_OPTS` value:
+
+```yaml
+JAVA_OPTS:
+```
+
 To run full validation in Docker without creating root-owned artifacts in the workspace:
 
 ```bash
