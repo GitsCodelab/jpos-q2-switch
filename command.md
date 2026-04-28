@@ -145,3 +145,6 @@ pkill -f 'org.jpos.q2.Q2' || true && : > logs/q2.log && nohup java -Dswitch.list
 
 
 mvn -q test && pkill -f 'org.jpos.q2.Q2' || true && : > logs/q2.log && nohup java -Dswitch.listener.debug=true -cp "$(cat .cp.txt):target/classes" org.jpos.q2.Q2 > q2.log 2>&1 & sleep 6 && source .venv/bin/activate && python -m pytest -s python_tests/ -q >/dev/null && echo '--- HEX LOGS ---' && grep -n 'HEX=' logs/q2.log | head -20 && echo '--- SUMMARY ---' && grep -n 'MTI=.*STAN=' logs/q2.log | head -5
+
+
+cd /home/samehabib/jpos-q2-switch && pkill -f 'org.jpos.q2.Q2' || true && fuser -k 9000/tcp || true && ss -ltnp '( sport = :9000 )' || true
