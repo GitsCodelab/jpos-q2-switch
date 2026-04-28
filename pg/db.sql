@@ -62,7 +62,9 @@ CREATE TABLE transaction_events (
 
     rc VARCHAR(2),
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_transaction_events_stan_rrn_type UNIQUE (stan, rrn, event_type)
 );
 
 CREATE INDEX idx_events_stan ON transaction_events(stan);

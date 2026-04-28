@@ -87,6 +87,10 @@ public class TransactionService {
     }
 
     public void persistIncomingRequest(ISOMsg request, String stan, String rrn, long amount) {
+        if (transactionDAO.exists(stan, rrn)) {
+            return;
+        }
+
         Transaction transaction = new Transaction();
         transaction.setMti(fieldOrNull(request, 0));
         transaction.setOriginalMti(fieldOrNull(request, 0));
@@ -105,6 +109,9 @@ public class TransactionService {
         }
 
         withTransaction(connection -> {
+            if (transactionDAO.exists(connection, stan, rrn)) {
+                return;
+            }
             transactionDAO.save(connection, transaction);
             String requestIso = dumpIso(request);
             eventDAO.saveIsoEvent(connection, stan, rrn, fieldOrNull(request, 0), "REQUEST", requestIso, null, null);

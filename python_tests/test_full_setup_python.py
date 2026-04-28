@@ -84,10 +84,15 @@ def _run_postgres_query(sql: str) -> str:
     return run.stdout.strip()
 
 
-def _run_iso_probe_and_assert_response() -> None:
+def _run_iso_probe_and_assert_response(
+    *,
+    stan: str = "123456",
+    rrn: str = "123456789012",
+    amount: str = "000000000100",
+    terminal_id: str = "TERM0001",
+) -> None:
     """Compile and run the Java ISO probe against Q2 and verify response."""
-    java_src = textwrap.dedent(
-        """
+    java_template = """
         import org.jpos.iso.ISOMsg;
         import org.jpos.iso.ISOUtil;
         import org.jpos.iso.channel.ASCIIChannel;
@@ -103,10 +108,10 @@ def _run_iso_probe_and_assert_response() -> None:
                 m.setPackager(p);
                 m.setMTI("0200");
                 m.set(3, "000000");
-                m.set(4, "000000000100");
-                m.set(11, "123456");
-                m.set(37, "123456789012");
-                m.set(41, "TERM0001");
+                m.set(4, "__AMOUNT__");
+                m.set(11, "__STAN__");
+                m.set(37, "__RRN__");
+                m.set(41, "__TERMINAL__");
                 // Intentionally provide only field 52 security data to trigger
                 // an immediate 96 response from SecurityService (no 30s MUX wait).
                 m.set(52, ISOUtil.hex2byte("0123456789ABCDE0"));
@@ -119,7 +124,17 @@ def _run_iso_probe_and_assert_response() -> None:
             }
         }
         """
+
+    java_src = textwrap.dedent(
+        java_template
     ).strip()
+    java_src = (
+        java_src
+        .replace("__AMOUNT__", amount)
+        .replace("__STAN__", stan)
+        .replace("__RRN__", rrn)
+        .replace("__TERMINAL__", terminal_id)
+    )
 
     with tempfile.TemporaryDirectory(prefix="pyiso-probe-") as tmp:
         src = Path(tmp) / "PyIsoProbe.java"
@@ -727,3 +742,66 @@ def test_runtime_iso_roundtrip_is_persisted_in_jpos_db() -> None:
     )
     assert "<field id=\"0\" value=\"0210\"/>" in response_iso
     assert "<field id=\"39\" value=\"96\"/>" in response_iso
+
+
+def test_duplicate_stan_persists_distinct_rows_by_rrn() -> None:
+    """Ensure same STAN with different RRN persists as distinct transactions.
+
+    This validates the DB uniqueness and upsert key behavior on (stan, rrn),
+    so reusing STAN does not overwrite another transaction with a different RRN.
+    """
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available")
+
+    if not _is_port_open("127.0.0.1", 9000):
+        pytest.skip("Q2 is not listening on 127.0.0.1:9000")
+
+    if shutil.which("javac") is None or shutil.which("java") is None:
+        pytest.skip("javac/java not available in PATH")
+
+    shared_stan = "777777"
+    rrn_1 = "777777000001"
+    rrn_2 = "777777000002"
+
+    _run_iso_probe_and_assert_response(stan=shared_stan, rrn=rrn_1)
+    _run_iso_probe_and_assert_response(stan=shared_stan, rrn=rrn_2)
+
+    rows = _run_postgres_query(
+        f"""
+        SELECT rrn, rc, final_status
+        FROM transactions
+        WHERE stan='{shared_stan}' AND rrn IN ('{rrn_1}', '{rrn_2}')
+        ORDER BY rrn ASC;
+        """
+    )
+    assert rows, f"No persisted transactions found for STAN={shared_stan}"
+
+    parsed = [line.split("|") for line in rows.splitlines() if line.strip()]
+    assert len(parsed) == 2, f"Expected 2 rows, got {len(parsed)} rows: {parsed}"
+
+    rrns = {row[0] for row in parsed}
+    assert rrns == {rrn_1, rrn_2}
+
+    for row in parsed:
+        assert row[1] == "96"
+        assert row[2] == "SECURITY_DECLINE"
+
+    for rrn in (rrn_1, rrn_2):
+        event_counts = _run_postgres_query(
+            f"""
+            SELECT event_type, COUNT(*)
+            FROM transaction_events
+            WHERE stan='{shared_stan}' AND rrn='{rrn}'
+            GROUP BY event_type
+            ORDER BY event_type;
+            """
+        )
+        assert event_counts, f"No lifecycle events found for STAN={shared_stan}, RRN={rrn}"
+
+        event_map = {}
+        for line in event_counts.splitlines():
+            event_type, count = line.split("|")
+            event_map[event_type] = int(count)
+
+        assert event_map.get("REQUEST") == 1
+        assert event_map.get("SECURITY_DECLINE") == 1

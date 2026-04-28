@@ -52,6 +52,34 @@ public class TransactionDAO {
         return Optional.ofNullable(transactions.get(buildKey(stan, rrn)));
     }
 
+    public boolean exists(String stan, String rrn) {
+        if (jdbcEnabled) {
+            try (Connection connection = DatabaseSupport.getConnection()) {
+                return exists(connection, stan, rrn);
+            } catch (SQLException e) {
+                throw new IllegalStateException("Failed to check transaction existence", e);
+            }
+        }
+        return transactions.containsKey(buildKey(stan, rrn));
+    }
+
+    public boolean exists(Connection connection, String stan, String rrn) {
+        if (!jdbcEnabled) {
+            return transactions.containsKey(buildKey(stan, rrn));
+        }
+
+        String sql = "SELECT 1 FROM transactions WHERE stan=? AND rrn=? LIMIT 1";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, stan);
+            ps.setString(2, rrn);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to check transaction existence", e);
+        }
+    }
+
     public int count() {
         if (jdbcEnabled) {
             return countJdbc();

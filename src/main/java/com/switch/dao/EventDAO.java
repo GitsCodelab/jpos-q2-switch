@@ -46,7 +46,12 @@ public class EventDAO {
             throw new IllegalArgumentException("transaction event requires non-empty STAN and RRN");
         }
 
-        String sql = "INSERT INTO transaction_events (stan, rrn, mti, event_type, request_iso, response_iso, rc) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        if (exists(connection, stan, rrn, eventType)) {
+            return;
+        }
+
+        String sql = "INSERT INTO transaction_events (stan, rrn, mti, event_type, request_iso, response_iso, rc) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            + "ON CONFLICT (stan, rrn, event_type) DO NOTHING";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, stan);
             ps.setString(2, rrn);
@@ -58,6 +63,36 @@ public class EventDAO {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to persist transaction event", e);
+        }
+    }
+
+    public boolean exists(String stan, String rrn, String eventType) {
+        if (!jdbcEnabled) {
+            return false;
+        }
+
+        try (Connection connection = DatabaseSupport.getConnection()) {
+            return exists(connection, stan, rrn, eventType);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to check event existence", e);
+        }
+    }
+
+    public boolean exists(Connection connection, String stan, String rrn, String eventType) {
+        if (!jdbcEnabled) {
+            return false;
+        }
+
+        String sql = "SELECT 1 FROM transaction_events WHERE stan=? AND rrn=? AND event_type=? LIMIT 1";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, stan);
+            ps.setString(2, rrn);
+            ps.setString(3, eventType);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to check event existence", e);
         }
     }
 
