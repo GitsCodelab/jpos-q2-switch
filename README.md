@@ -114,10 +114,15 @@ Switch database environment variables (in `docker-compose.yml`):
 - `DB_USER=postgres`
 - `DB_PASSWORD=postgres`
 - `DB_URL=jdbc:postgresql://jpos-postgresql:5432/jpos`
+- `DB_POOL_MAX_SIZE=10` (optional)
+- `DB_CONNECT_RETRIES=3` (optional)
+- `DB_CONNECT_RETRY_DELAY_MS=150` (optional)
+- `DB_IN_MEMORY_MIRROR=false` (optional; defaults off when DB is enabled)
 
 Java switch persistence behavior:
 
 - DB persistence is handled by Java runtime (`SwitchListener` + DAO layer) for request and response paths.
+- Java persistence uses pooled JDBC connections (HikariCP), not per-operation `DriverManager` connects.
 - Persistence is enabled by default in Java.
 - To explicitly disable DB writes (debug only), set `DB_PERSISTENCE_ENABLED=false`.
 
@@ -127,6 +132,28 @@ Initialize schema (first run or after volume reset):
 cd /home/samehabib/jpos-q2-switch
 docker compose exec -T jpos-postgresql psql -U postgres -f /docker-entrypoint-initdb.d/db.sql
 ```
+
+If your DB was created with older constraints, run this migration once:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
+	-c "WITH ranked AS (SELECT ctid, ROW_NUMBER() OVER (PARTITION BY stan, rrn ORDER BY id DESC) AS rn FROM transactions) DELETE FROM transactions t USING ranked r WHERE t.ctid=r.ctid AND r.rn>1;" \
+	-c "ALTER TABLE transactions DROP CONSTRAINT IF EXISTS uq_stan_terminal;" \
+	-c "ALTER TABLE transactions ADD CONSTRAINT uq_transactions_stan_rrn UNIQUE (stan, rrn);" \
+	-c "CREATE INDEX IF NOT EXISTS idx_transactions_stan ON transactions(stan);" \
+	-c "CREATE INDEX IF NOT EXISTS idx_transactions_rrn ON transactions(rrn);"
+```
+
+If `transactions.amount` is still `numeric(15,2)` in an older DB, convert it to minor-unit `BIGINT`:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
+  -c "ALTER TABLE transactions ALTER COLUMN amount TYPE BIGINT USING ROUND(amount * 100)::BIGINT;"
+```
+
+After this migration, Java persists `amount` as ISO minor units directly (example: `10000` means `100.00`).
 
 Persistence model:
 

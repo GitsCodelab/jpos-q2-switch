@@ -13,12 +13,16 @@ import java.util.List;
 public class EventDAO {
     private final List<Event> events = Collections.synchronizedList(new ArrayList<>());
     private final boolean jdbcEnabled = DatabaseSupport.isJdbcEnabled();
+    private final boolean mirrorInMemory = DatabaseSupport.isInMemoryMirrorEnabled();
 
     public void save(Event event) {
-        events.add(event);
-        if (jdbcEnabled) {
-            saveIsoEvent(null, null, null, event.getType(), event.getMessage(), null, null);
+        if (!jdbcEnabled || mirrorInMemory) {
+            events.add(event);
         }
+    }
+
+    public void saveBusinessEvent(String stan, String rrn, String mti, String eventType, String message, String rc) {
+        saveIsoEvent(stan, rrn, mti, eventType, message, null, rc);
     }
 
     public void saveIsoEvent(String stan, String rrn, String mti, String eventType, String requestIso, String responseIso, String rc) {
@@ -26,9 +30,24 @@ public class EventDAO {
             return;
         }
 
+        try (Connection connection = DatabaseSupport.getConnection()) {
+            saveIsoEvent(connection, stan, rrn, mti, eventType, requestIso, responseIso, rc);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to persist transaction event", e);
+        }
+    }
+
+    public void saveIsoEvent(Connection connection, String stan, String rrn, String mti, String eventType, String requestIso, String responseIso, String rc) {
+        if (!jdbcEnabled) {
+            return;
+        }
+
+        if (stan == null || stan.isBlank() || rrn == null || rrn.isBlank()) {
+            throw new IllegalArgumentException("transaction event requires non-empty STAN and RRN");
+        }
+
         String sql = "INSERT INTO transaction_events (stan, rrn, mti, event_type, request_iso, response_iso, rc) VALUES (?, ?, ?, ?, ?, ?, ?)";
-        try (Connection connection = DatabaseSupport.getConnection();
-             PreparedStatement ps = connection.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, stan);
             ps.setString(2, rrn);
             ps.setString(3, mti);

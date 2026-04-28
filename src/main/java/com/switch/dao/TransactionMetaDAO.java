@@ -12,9 +12,20 @@ public class TransactionMetaDAO {
             return;
         }
 
+        try (Connection connection = DatabaseSupport.getConnection()) {
+            saveMeta(connection, stan, acquirerId, issuerId, processingCode);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to persist transaction meta", e);
+        }
+    }
+
+    public void saveMeta(Connection connection, String stan, String acquirerId, String issuerId, String processingCode) {
+        if (!jdbcEnabled) {
+            return;
+        }
+
         String sql = "INSERT INTO transaction_meta (stan, acquirer_id, issuer_id, processing_code) VALUES (?, ?, ?, ?)";
-        try (Connection connection = DatabaseSupport.getConnection();
-             PreparedStatement ps = connection.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, stan);
             ps.setString(2, acquirerId);
             ps.setString(3, issuerId);

@@ -1,4 +1,3 @@
-
 -- =========================================================
 -- SWITCH DATABASE SCHEMA
 -- File: switch-db.sql
@@ -8,14 +7,7 @@
 -- =========================
 -- 0. CREATE DATABASE
 -- =========================
--- Run this separately if needed (psql or admin tool)
 CREATE DATABASE jpos;
-
--- =========================
--- CONNECT TO DATABASE
--- =========================
--- In psql:
--- \c switch_db;
 
 -- =========================
 -- 1. TRANSACTIONS TABLE
@@ -30,7 +22,9 @@ CREATE TABLE transactions (
     mti VARCHAR(4),
     original_mti VARCHAR(4),
 
-    amount NUMERIC(15,2),
+    -- 🔥 MINOR UNITS (IMPORTANT)
+    -- Example: 10000 = 100.00
+    amount BIGINT,
     currency VARCHAR(3),
 
     rc VARCHAR(2),
@@ -43,9 +37,10 @@ CREATE TABLE transactions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT uq_stan_terminal UNIQUE (stan, terminal_id)
+    CONSTRAINT uq_transactions_stan_rrn UNIQUE (stan, rrn)
 );
 
+CREATE INDEX idx_transactions_stan ON transactions(stan);
 CREATE INDEX idx_transactions_rrn ON transactions(rrn);
 CREATE INDEX idx_transactions_status ON transactions(status);
 

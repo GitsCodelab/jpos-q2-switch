@@ -54,6 +54,12 @@
         </dependency>
 
         <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>5.1.0</version>
+        </dependency>
+
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
             <version>${junit.jupiter.version}</version>
@@ -100,6 +106,7 @@
                     <useModulePath>false</useModulePath>
                     <environmentVariables>
                         <BASE_DERIVATION_KEY>0123456789ABCDEFFEDCBA9876543210</BASE_DERIVATION_KEY>
+                        <DB_PERSISTENCE_ENABLED>false</DB_PERSISTENCE_ENABLED>
                     </environmentVariables>
                 </configuration>
             </plugin>

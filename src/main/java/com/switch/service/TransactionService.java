@@ -1,6 +1,7 @@
 package com.qswitch.service;
 
 import com.qswitch.dao.EventDAO;
+import com.qswitch.dao.DatabaseSupport;
 import com.qswitch.dao.TransactionDAO;
 import com.qswitch.dao.TransactionMetaDAO;
 import com.qswitch.model.Event;
@@ -11,6 +12,8 @@ import org.jpos.iso.ISOMsg;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.SQLException;
 
 import java.util.Optional;
 
@@ -33,6 +36,18 @@ public class TransactionService {
         Optional<Transaction> existing = transactionDAO.findByStanAndRrn(stan, rrn);
         if (existing.isPresent() && existing.get().getResponseCode() != null) {
             eventDAO.save(new Event("REPLAY_DETECTED", "Replay detected for stan=" + stan + " rrn=" + rrn));
+            if (DatabaseSupport.isJdbcEnabled()) {
+                withTransaction(connection -> eventDAO.saveIsoEvent(
+                    connection,
+                    stan,
+                    rrn,
+                    existing.get().getMti(),
+                    "REPLAY_DETECTED",
+                    "Replay detected for stan=" + stan + " rrn=" + rrn,
+                    null,
+                    existing.get().getResponseCode()
+                ));
+            }
             return existing.get();
         }
 
@@ -56,7 +71,19 @@ public class TransactionService {
             eventDAO.save(new Event("AUTH_DECLINED", "Declined invalid amount=" + amount + " stan=" + stan));
         }
 
-        return transactionDAO.save(transaction);
+        if (!DatabaseSupport.isJdbcEnabled()) {
+            return transactionDAO.save(transaction);
+        }
+
+        withTransaction(connection -> {
+            transactionDAO.save(connection, transaction);
+            String eventType = transaction.isApproved() ? "AUTH_APPROVED" : "AUTH_DECLINED";
+            String eventMessage = transaction.isApproved()
+                ? "Approved amount=" + amount + " stan=" + stan
+                : "Declined invalid amount=" + amount + " stan=" + stan;
+            eventDAO.saveIsoEvent(connection, stan, rrn, transaction.getMti(), eventType, eventMessage, null, transaction.getResponseCode());
+        });
+        return transaction;
     }
 
     public void persistIncomingRequest(ISOMsg request, String stan, String rrn, long amount) {
@@ -71,22 +98,64 @@ public class TransactionService {
         transaction.setStatus("REQUEST_RECEIVED");
         transaction.setFinalStatus("PENDING");
         transaction.setReversal(isReversal(request));
-        transactionDAO.save(transaction);
 
-        String requestIso = dumpIso(request);
-        eventDAO.saveIsoEvent(stan, rrn, fieldOrNull(request, 0), "REQUEST", requestIso, null, null);
-        transactionMetaDAO.saveMeta(stan, fieldOrNull(request, 32), fieldOrNull(request, 33), fieldOrNull(request, 3));
+        if (!DatabaseSupport.isJdbcEnabled()) {
+            transactionDAO.save(transaction);
+            return;
+        }
+
+        withTransaction(connection -> {
+            transactionDAO.save(connection, transaction);
+            String requestIso = dumpIso(request);
+            eventDAO.saveIsoEvent(connection, stan, rrn, fieldOrNull(request, 0), "REQUEST", requestIso, null, null);
+            transactionMetaDAO.saveMeta(connection, stan, fieldOrNull(request, 32), fieldOrNull(request, 33), fieldOrNull(request, 3));
+        });
     }
 
     public void persistOutgoingResponse(ISOMsg request, ISOMsg response, String eventType) {
         String stan = fieldOrDefault(response, 11, fieldOrDefault(request, 11, "000000"));
         String rrn = fieldOrDefault(response, 37, fieldOrDefault(request, 37, "000000000000"));
-        String terminalId = fieldOrNull(request, 41);
         String rc = fieldOrNull(response, 39);
 
-        transactionDAO.updateResponse(stan, terminalId, rrn, rc, eventType);
-        String responseIso = dumpIso(response);
-        eventDAO.saveIsoEvent(stan, rrn, fieldOrNull(response, 0), eventType, null, responseIso, rc);
+        if (!DatabaseSupport.isJdbcEnabled()) {
+            transactionDAO.updateResponse(stan, rrn, rc, eventType);
+            return;
+        }
+
+        withTransaction(connection -> {
+            transactionDAO.updateResponse(connection, stan, rrn, rc, eventType);
+            String responseIso = dumpIso(response);
+            eventDAO.saveIsoEvent(connection, stan, rrn, fieldOrNull(response, 0), eventType, null, responseIso, rc);
+        });
+    }
+
+    private void withTransaction(SqlWork work) {
+        try (Connection connection = DatabaseSupport.getConnection()) {
+            boolean previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                work.apply(connection);
+                connection.commit();
+            } catch (Exception e) {
+                try {
+                    connection.rollback();
+                } catch (SQLException rollbackError) {
+                    e.addSuppressed(rollbackError);
+                }
+                throw e;
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Transaction failed", e);
+        } catch (Exception e) {
+            throw new IllegalStateException("Transaction failed", e);
+        }
+    }
+
+    @FunctionalInterface
+    private interface SqlWork {
+        void apply(Connection connection) throws Exception;
     }
 
     private String fieldOrNull(ISOMsg msg, int field) {

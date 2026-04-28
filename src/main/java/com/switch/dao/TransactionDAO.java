@@ -2,7 +2,6 @@ package com.qswitch.dao;
 
 import com.qswitch.model.Transaction;
 
-import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -15,12 +14,31 @@ import java.util.concurrent.ConcurrentHashMap;
 public class TransactionDAO {
     private final Map<String, Transaction> transactions = new ConcurrentHashMap<>();
     private final boolean jdbcEnabled = DatabaseSupport.isJdbcEnabled();
+    private final boolean mirrorInMemory = DatabaseSupport.isInMemoryMirrorEnabled();
 
     public Transaction save(Transaction transaction) {
         if (jdbcEnabled) {
-            upsertTransaction(transaction);
+            try (Connection connection = DatabaseSupport.getConnection()) {
+                save(connection, transaction);
+            } catch (SQLException e) {
+                throw new IllegalStateException("Failed to persist transaction", e);
+            }
+            if (mirrorInMemory) {
+                transactions.put(buildKey(transaction.getStan(), transaction.getRrn()), transaction);
+            }
+            return transaction;
         }
         transactions.put(buildKey(transaction.getStan(), transaction.getRrn()), transaction);
+        return transaction;
+    }
+
+    public Transaction save(Connection connection, Transaction transaction) {
+        if (jdbcEnabled) {
+            upsertTransaction(connection, transaction);
+        }
+        if (!jdbcEnabled || mirrorInMemory) {
+            transactions.put(buildKey(transaction.getStan(), transaction.getRrn()), transaction);
+        }
         return transaction;
     }
 
@@ -41,7 +59,24 @@ public class TransactionDAO {
         return transactions.size();
     }
 
-    public void updateResponse(String stan, String terminalId, String rrn, String rc, String finalStatus) {
+    public void updateResponse(String stan, String rrn, String rc, String finalStatus) {
+        if (!jdbcEnabled) {
+            Transaction tx = transactions.get(buildKey(stan, rrn));
+            if (tx != null) {
+                tx.setResponseCode(rc);
+                tx.setFinalStatus(finalStatus);
+            }
+            return;
+        }
+
+        try (Connection connection = DatabaseSupport.getConnection()) {
+            updateResponse(connection, stan, rrn, rc, finalStatus);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to update transaction response", e);
+        }
+    }
+
+    public void updateResponse(Connection connection, String stan, String rrn, String rc, String finalStatus) {
         if (!jdbcEnabled) {
             Transaction tx = transactions.get(buildKey(stan, rrn));
             if (tx != null) {
@@ -52,47 +87,33 @@ public class TransactionDAO {
         }
 
         String sql = "UPDATE transactions SET rc=?, final_status=?, updated_at=NOW() "
-            + "WHERE stan=? AND rrn=? AND terminal_id=?";
-        try (Connection connection = DatabaseSupport.getConnection();
-             PreparedStatement ps = connection.prepareStatement(sql)) {
+            + "WHERE stan=? AND rrn=?";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, rc);
             ps.setString(2, finalStatus);
             ps.setString(3, stan);
             ps.setString(4, rrn);
-            ps.setString(5, terminalId);
-            int updated = ps.executeUpdate();
-            if (updated == 0) {
-                String fallbackSql = "UPDATE transactions SET rc=?, final_status=?, updated_at=NOW() "
-                    + "WHERE stan=? AND rrn=?";
-                try (PreparedStatement fallback = connection.prepareStatement(fallbackSql)) {
-                    fallback.setString(1, rc);
-                    fallback.setString(2, finalStatus);
-                    fallback.setString(3, stan);
-                    fallback.setString(4, rrn);
-                    fallback.executeUpdate();
-                }
-            }
+            ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update transaction response", e);
         }
     }
 
-    private void upsertTransaction(Transaction transaction) {
+    private void upsertTransaction(Connection connection, Transaction transaction) {
         String sql = "INSERT INTO transactions (stan, rrn, terminal_id, mti, original_mti, amount, currency, rc, status, final_status, is_reversal, created_at, updated_at) "
             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            + "ON CONFLICT (stan, terminal_id) DO UPDATE SET "
-            + "rrn=EXCLUDED.rrn, mti=EXCLUDED.mti, original_mti=EXCLUDED.original_mti, amount=EXCLUDED.amount, "
+            + "ON CONFLICT (stan, rrn) DO UPDATE SET "
+            + "terminal_id=EXCLUDED.terminal_id, mti=EXCLUDED.mti, original_mti=EXCLUDED.original_mti, amount=EXCLUDED.amount, "
             + "currency=EXCLUDED.currency, rc=COALESCE(EXCLUDED.rc, transactions.rc), status=EXCLUDED.status, "
             + "final_status=COALESCE(EXCLUDED.final_status, transactions.final_status), is_reversal=EXCLUDED.is_reversal, updated_at=NOW()";
 
-        try (Connection connection = DatabaseSupport.getConnection();
-             PreparedStatement ps = connection.prepareStatement(sql)) {
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, transaction.getStan());
             ps.setString(2, transaction.getRrn());
             ps.setString(3, transaction.getTerminalId());
             ps.setString(4, transaction.getMti());
             ps.setString(5, transaction.getOriginalMti());
-            ps.setBigDecimal(6, BigDecimal.valueOf(transaction.getAmount()).movePointLeft(2));
+            ps.setLong(6, transaction.getAmount());
             ps.setString(7, transaction.getCurrency());
             ps.setString(8, transaction.getResponseCode());
             ps.setString(9, transaction.getStatus());
@@ -121,7 +142,7 @@ public class TransactionDAO {
                 transaction.setMti(rs.getString("mti"));
                 transaction.setStan(rs.getString("stan"));
                 transaction.setRrn(rs.getString("rrn"));
-                transaction.setAmount(rs.getBigDecimal("amount").movePointRight(2).longValue());
+                transaction.setAmount(rs.getLong("amount"));
                 transaction.setCurrency(rs.getString("currency"));
                 transaction.setResponseCode(rs.getString("rc"));
                 transaction.setTerminalId(rs.getString("terminal_id"));
