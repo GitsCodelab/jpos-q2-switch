@@ -33,6 +33,7 @@
           <useModulePath>false</useModulePath>
           <environmentVariables>
             <BASE_DERIVATION_KEY>0123456789ABCDEFFEDCBA9876543210</BASE_DERIVATION_KEY>
+            <DB_PERSISTENCE_ENABLED>false</DB_PERSISTENCE_ENABLED>
           </environmentVariables>
         </configuration>
       </plugin>
