@@ -115,6 +115,33 @@ Switch database environment variables (in `docker-compose.yml`):
 - `DB_PASSWORD=postgres`
 - `DB_URL=jdbc:postgresql://jpos-postgresql:5432/jpos`
 
+Java switch persistence behavior:
+
+- DB persistence is handled by Java runtime (`SwitchListener` + DAO layer) for request and response paths.
+- Persistence is enabled by default in Java.
+- To explicitly disable DB writes (debug only), set `DB_PERSISTENCE_ENABLED=false`.
+
+Initialize schema (first run or after volume reset):
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -f /docker-entrypoint-initdb.d/db.sql
+```
+
+Persistence model:
+
+- `transactions`: one row per ISO flow (`MTI`, `STAN`, `RRN`, `terminal_id`, amount, `rc`, `status`, `final_status`)
+- `transaction_events`: detailed request/response payload snapshots with event type (`REQUEST`, `LOCAL_RESPONSE`, `SECURITY_DECLINE`, `MUX_RESPONSE`, etc.)
+- `transaction_meta`: supporting metadata (acquirer IDs, processing code)
+
+Verification query examples:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos -c "SELECT id,stan,rrn,mti,rc,status,final_status,created_at FROM transactions ORDER BY id DESC LIMIT 10;"
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos -c "SELECT id,stan,event_type,left(request_iso,120) AS request_head,left(response_iso,120) AS response_head,created_at FROM transaction_events ORDER BY id DESC LIMIT 10;"
+```
+
 To disable HEX logging, edit `docker-compose.yml` and clear the `JAVA_OPTS` value:
 
 ```yaml
@@ -141,6 +168,16 @@ Business logic remains in Java (jPOS + Q2). Python is used only to validate setu
 ```
 
 This command runs Python-based validation scenarios mapped to the business-case matrix.
+
+DB persistence verification test (runtime ISO vs PostgreSQL rows):
+
+```bash
+/home/samehabib/jpos-q2-switch/.venv/bin/python -m pytest -q python_tests/test_full_setup_python.py -k persisted
+```
+
+The persistence test sends a real ISO 0200 probe to Q2, expects a 0210/96 reply,
+and verifies the latest DB rows contain matching `STAN`, `RRN`, terminal, response
+code, and ISO payload content.
 
 Python test execution also generates:
 

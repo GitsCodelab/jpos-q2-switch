@@ -64,6 +64,89 @@ def _java_classpath() -> str:
     return f"{deps}:target/classes"
 
 
+def _run_postgres_query(sql: str) -> str:
+    """Run a SQL query in the dockerized PostgreSQL service and return raw output.
+
+    The query is executed with psql in unaligned mode for easier parsing in tests.
+    """
+    run = subprocess.run(
+        [
+            "docker", "compose", "exec", "-T", "jpos-postgresql",
+            "psql", "-U", "postgres", "-d", "jpos", "-At", "-F", "|", "-c", sql,
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if run.returncode != 0:
+        raise RuntimeError(run.stderr or run.stdout)
+    return run.stdout.strip()
+
+
+def _run_iso_probe_and_assert_response() -> None:
+    """Compile and run the Java ISO probe against Q2 and verify response."""
+    java_src = textwrap.dedent(
+        """
+        import org.jpos.iso.ISOMsg;
+        import org.jpos.iso.ISOUtil;
+        import org.jpos.iso.channel.ASCIIChannel;
+        import org.jpos.iso.packager.GenericPackager;
+
+        public class PyIsoProbe {
+            public static void main(String[] args) throws Exception {
+                GenericPackager p = new GenericPackager("cfg/iso87.xml");
+                ASCIIChannel ch = new ASCIIChannel("127.0.0.1", 9000, p);
+                ch.connect();
+
+                ISOMsg m = new ISOMsg();
+                m.setPackager(p);
+                m.setMTI("0200");
+                m.set(3, "000000");
+                m.set(4, "000000000100");
+                m.set(11, "123456");
+                m.set(37, "123456789012");
+                m.set(41, "TERM0001");
+                // Intentionally provide only field 52 security data to trigger
+                // an immediate 96 response from SecurityService (no 30s MUX wait).
+                m.set(52, ISOUtil.hex2byte("0123456789ABCDE0"));
+
+                ch.send(m);
+                ISOMsg r = ch.receive();
+                System.out.println("RESP_MTI=" + r.getMTI());
+                System.out.println("RESP_39=" + r.getString(39));
+                ch.disconnect();
+            }
+        }
+        """
+    ).strip()
+
+    with tempfile.TemporaryDirectory(prefix="pyiso-probe-") as tmp:
+        src = Path(tmp) / "PyIsoProbe.java"
+        src.write_text(java_src, encoding="utf-8")
+
+        cp = _java_classpath()
+        compile_run = subprocess.run(
+            ["javac", "-cp", cp, str(src)],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert compile_run.returncode == 0, compile_run.stderr or compile_run.stdout
+
+        run = subprocess.run(
+            ["java", "-cp", f"{cp}:{tmp}", "PyIsoProbe"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert run.returncode == 0, run.stderr or run.stdout
+        assert "RESP_MTI=0210" in run.stdout
+        assert "RESP_39=96" in run.stdout
+
+
 def _xml_is_well_formed(path: str) -> bool:
     """Check whether an XML file parses without errors.
 
@@ -568,65 +651,7 @@ def test_pytest_generates_runtime_iso_io_logs() -> None:
 
     before = q2_log.read_text(encoding="utf-8", errors="ignore") if q2_log.exists() else ""
 
-    java_src = textwrap.dedent(
-        """
-        import org.jpos.iso.ISOMsg;
-        import org.jpos.iso.ISOUtil;
-        import org.jpos.iso.channel.ASCIIChannel;
-        import org.jpos.iso.packager.GenericPackager;
-
-        public class PyIsoProbe {
-            public static void main(String[] args) throws Exception {
-                GenericPackager p = new GenericPackager("cfg/iso87.xml");
-                ASCIIChannel ch = new ASCIIChannel("127.0.0.1", 9000, p);
-                ch.connect();
-
-                ISOMsg m = new ISOMsg();
-                m.setPackager(p);
-                m.setMTI("0200");
-                m.set(3, "000000");
-                m.set(4, "000000000100");
-                m.set(11, "123456");
-                m.set(37, "123456789012");
-                m.set(41, "TERM0001");
-                // Intentionally provide only field 52 security data to trigger
-                // an immediate 96 response from SecurityService (no 30s MUX wait).
-                m.set(52, ISOUtil.hex2byte("0123456789ABCDE0"));
-
-                ch.send(m);
-                ISOMsg r = ch.receive();
-                System.out.println("RESP_MTI=" + r.getMTI());
-                System.out.println("RESP_39=" + r.getString(39));
-                ch.disconnect();
-            }
-        }
-        """
-    ).strip()
-
-    with tempfile.TemporaryDirectory(prefix="pyiso-probe-") as tmp:
-        src = Path(tmp) / "PyIsoProbe.java"
-        src.write_text(java_src, encoding="utf-8")
-
-        cp = _java_classpath()
-        compile_run = subprocess.run(
-            ["javac", "-cp", cp, str(src)],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert compile_run.returncode == 0, compile_run.stderr or compile_run.stdout
-
-        run = subprocess.run(
-            ["java", "-cp", f"{cp}:{tmp}", "PyIsoProbe"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert run.returncode == 0, run.stderr or run.stdout
-        assert "RESP_MTI=0210" in run.stdout
-        assert "RESP_39=96" in run.stdout
+    _run_iso_probe_and_assert_response()
 
     # Give logger a brief moment to flush session lines.
     time.sleep(0.5)
@@ -636,3 +661,69 @@ def test_pytest_generates_runtime_iso_io_logs() -> None:
 
     assert "session-start" in delta or "session-start" in after
     assert "session-end" in delta or "session-end" in after
+
+
+def test_runtime_iso_roundtrip_is_persisted_in_jpos_db() -> None:
+    """Validate that runtime ISO request/response values are persisted in PostgreSQL.
+
+    This checks both the transactions row and detailed event payloads after the
+    Java probe sends a financial request.
+    """
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available")
+
+    if not _is_port_open("127.0.0.1", 9000):
+        pytest.skip("Q2 is not listening on 127.0.0.1:9000")
+
+    if shutil.which("javac") is None or shutil.which("java") is None:
+        pytest.skip("javac/java not available in PATH")
+
+    # Trigger one runtime request/response cycle first.
+    _run_iso_probe_and_assert_response()
+
+    tx_row = _run_postgres_query(
+        """
+        SELECT stan, rrn, terminal_id, mti, rc, status, final_status
+        FROM transactions
+        WHERE stan='123456' AND rrn='123456789012'
+        ORDER BY id DESC
+        LIMIT 1;
+        """
+    )
+    assert tx_row, "No persisted transaction row found for STAN=123456"
+    stan, rrn, terminal_id, mti, rc, status, final_status = tx_row.split("|")
+
+    assert stan == "123456"
+    assert rrn == "123456789012"
+    assert terminal_id == "TERM0001"
+    assert mti == "0200"
+    assert rc == "96"
+    assert status == "REQUEST_RECEIVED"
+    assert final_status == "SECURITY_DECLINE"
+
+    request_iso = _run_postgres_query(
+        """
+        SELECT request_iso
+        FROM transaction_events
+        WHERE stan='123456' AND event_type='REQUEST'
+        ORDER BY id DESC
+        LIMIT 1;
+        """
+    )
+    assert "<field id=\"0\" value=\"0200\"/>" in request_iso
+    assert "<field id=\"3\" value=\"000000\"/>" in request_iso
+    assert "<field id=\"4\" value=\"000000000100\"/>" in request_iso
+    assert "<field id=\"11\" value=\"123456\"/>" in request_iso
+    assert "<field id=\"37\" value=\"123456789012\"/>" in request_iso
+
+    response_iso = _run_postgres_query(
+        """
+        SELECT response_iso
+        FROM transaction_events
+        WHERE stan='123456' AND event_type='SECURITY_DECLINE'
+        ORDER BY id DESC
+        LIMIT 1;
+        """
+    )
+    assert "<field id=\"0\" value=\"0210\"/>" in response_iso
+    assert "<field id=\"39\" value=\"96\"/>" in response_iso

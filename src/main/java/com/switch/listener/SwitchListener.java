@@ -53,20 +53,21 @@ public class SwitchListener extends QBeanSupport implements ISORequestListener {
             String stan = request.hasField(11) ? request.getString(11) : "000000";
             String rrn  = request.hasField(37) ? request.getString(37) : "000000000000";
             long amount = parseAmount(request.hasField(4) ? request.getString(4) : "0");
+            transactionService.persistIncomingRequest(request, stan, rrn, amount);
 
             // ---------------- SECURITY ----------------
             SecurityService.ValidationResult security = securityService.validateRequestSecurity(request);
             if (!security.isValid()) {
                 ISOMsg resp = buildBaseResponse(request, stan, rrn);
                 resp.set(39, security.getResponseCode());
-                safeSend(source, resp, "SECURITY DECLINE");
+                safeSend(source, request, resp, "SECURITY DECLINE", "SECURITY_DECLINE");
                 return true;
             }
 
             // ---------------- MUX ROUTING ----------------
             ISOMsg muxResponse = requestThroughMux(request);
             if (muxResponse != null) {
-                safeSend(source, muxResponse, "MUX RESPONSE");
+                safeSend(source, request, muxResponse, "MUX RESPONSE", "MUX_RESPONSE");
                 return true;
             }
 
@@ -80,7 +81,7 @@ public class SwitchListener extends QBeanSupport implements ISORequestListener {
                 response.set(64, securityService.generateResponseMac(request, response));
             }
 
-            safeSend(source, response, "LOCAL RESPONSE");
+            safeSend(source, request, response, "LOCAL RESPONSE", "LOCAL_RESPONSE");
             return true;
 
         } catch (Exception e) {
@@ -88,7 +89,7 @@ public class SwitchListener extends QBeanSupport implements ISORequestListener {
             try {
                 ISOMsg resp = buildBaseResponse(request, "000000", "000000000000");
                 resp.set(39, "96");
-                safeSend(source, resp, "EXCEPTION RESPONSE");
+                safeSend(source, request, resp, "EXCEPTION RESPONSE", "EXCEPTION_RESPONSE");
             } catch (Exception ignored) {
                 return false;
             }
@@ -119,7 +120,13 @@ public class SwitchListener extends QBeanSupport implements ISORequestListener {
     }
 
     // ---------------- SAFE SEND ----------------
-    private void safeSend(ISOSource source, ISOMsg resp, String label) {
+    private void safeSend(ISOSource source, ISOMsg request, ISOMsg resp, String label, String eventType) {
+        try {
+            transactionService.persistOutgoingResponse(request, resp, eventType);
+        } catch (Exception e) {
+            getLog().error("Failed to persist response", e);
+        }
+
         try {
             source.send(resp);
             getLog().info(
