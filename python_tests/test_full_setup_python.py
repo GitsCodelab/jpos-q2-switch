@@ -705,6 +705,17 @@ def test_runtime_iso_roundtrip_is_persisted_in_jpos_db() -> None:
     if shutil.which("javac") is None or shutil.which("java") is None:
         pytest.skip("javac/java not available in PATH")
 
+    # Clean up any pre-existing test transactions to ensure test isolation.
+    # This handles cases where populate-settlement-data.sql may have been run
+    # and overwrote test transaction data with sample data.
+    _run_postgres_query(
+        """
+        DELETE FROM transaction_events WHERE stan='123456';
+        DELETE FROM transaction_meta WHERE stan='123456';
+        DELETE FROM transactions WHERE stan='123456' AND rrn='123456789012';
+        """
+    )
+
     # Trigger one runtime request/response cycle first.
     _run_iso_probe_and_assert_response()
 
@@ -774,6 +785,15 @@ def test_duplicate_stan_persists_distinct_rows_by_rrn() -> None:
     shared_stan = "777777"
     rrn_1 = "777777000001"
     rrn_2 = "777777000002"
+
+    # Clean up any pre-existing test transactions
+    _run_postgres_query(
+        f"""
+        DELETE FROM transaction_events WHERE stan='{shared_stan}';
+        DELETE FROM transaction_meta WHERE stan='{shared_stan}';
+        DELETE FROM transactions WHERE stan='{shared_stan}';
+        """
+    )
 
     _run_iso_probe_and_assert_response(stan=shared_stan, rrn=rrn_1)
     _run_iso_probe_and_assert_response(stan=shared_stan, rrn=rrn_2)

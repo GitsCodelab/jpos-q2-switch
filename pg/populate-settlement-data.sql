@@ -11,9 +11,18 @@ UPDATE transactions SET issuer_id = 'BANK_B' WHERE id % 3 = 1 AND issuer_id IS N
 UPDATE transactions SET issuer_id = 'BANK_C' WHERE id % 3 = 2 AND issuer_id IS NULL;
 
 -- Populate terminal_id with sample terminals if missing
-UPDATE transactions SET terminal_id = 'TERM0001' WHERE id % 3 = 0 AND terminal_id IS NULL;
-UPDATE transactions SET terminal_id = 'TERM0002' WHERE id % 3 = 1 AND terminal_id IS NULL;
-UPDATE transactions SET terminal_id = 'TERM0003' WHERE id % 3 = 2 AND terminal_id IS NULL;
+-- Skip STAN values used by tests (123456, 777777) to avoid test interference
+UPDATE transactions 
+SET terminal_id = 'TERM0001' 
+WHERE id % 3 = 0 AND terminal_id IS NULL AND stan NOT IN ('123456', '777777');
+
+UPDATE transactions 
+SET terminal_id = 'TERM0002' 
+WHERE id % 3 = 1 AND terminal_id IS NULL AND stan NOT IN ('123456', '777777');
+
+UPDATE transactions 
+SET terminal_id = 'TERM0003' 
+WHERE id % 3 = 2 AND terminal_id IS NULL AND stan NOT IN ('123456', '777777');
 
 -- Populate acquirer_id by joining with terminals table
 UPDATE transactions t

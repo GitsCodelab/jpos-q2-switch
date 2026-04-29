@@ -22,6 +22,15 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "git commit": true
+        "git commit": true,
+        "/^cd /home/samehabib/jpos-q2-switch && python -m pytest -s python_tests/ -q 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "timeout": true,
+        "/^cd /home/samehabib/jpos-q2-switch && python -m pytest python_tests/test_full_setup_python\\.py --collect-only 2>&1 \\| grep \"test_\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
