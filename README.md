@@ -283,6 +283,92 @@ cd /home/samehabib/jpos-q2-switch
 mvn -q -Dtest=ReconciliationServiceTest,AutoReversalServiceTest test
 ```
 
+## Settlement & Clearing Engine (Phase 3)
+
+Settlement lifecycle extension:
+
+- `0200` approved/authorized -> eligible for settlement
+- `0400` reversal path remains unchanged
+- settlement run marks financial completion and batch assignment
+
+Schema additions in `transactions`:
+
+- `settled BOOLEAN DEFAULT FALSE`
+- `settlement_date DATE`
+- `batch_id VARCHAR(32)`
+
+Additional table:
+
+- `settlement_batches(batch_id, total_count, total_amount, created_at)`
+
+If your database already exists, run this one-time migration:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
+	-c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS settled BOOLEAN DEFAULT FALSE;" \
+	-c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS settlement_date DATE;" \
+	-c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS batch_id VARCHAR(32);" \
+	-c "CREATE TABLE IF NOT EXISTS settlement_batches (id BIGSERIAL PRIMARY KEY, batch_id VARCHAR(32) UNIQUE, total_count INT, total_amount BIGINT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);" \
+	-c "CREATE INDEX IF NOT EXISTS idx_transactions_settled ON transactions(settled);" \
+	-c "CREATE INDEX IF NOT EXISTS idx_transactions_batch_id ON transactions(batch_id);" \
+	-c "CREATE INDEX IF NOT EXISTS idx_settlement_batches_batch_id ON settlement_batches(batch_id);"
+```
+
+Core implementation:
+
+- `src/main/java/com/switch/settlement/SettlementService.java`
+- `src/main/java/com/switch/settlement/SettlementRunner.java`
+
+Settlement behavior:
+
+- selects unsettled rows in `AUTHORIZED`/`APPROVED`
+- marks rows as settled with `settlement_date=CURRENT_DATE` and generated `batch_id`
+- persists one aggregate record in `settlement_batches`
+
+Run settlement:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose up -d
+mvn -q -DskipTests org.codehaus.mojo:exec-maven-plugin:3.5.0:java \
+	-Dexec.mainClass=com.qswitch.settlement.SettlementRunner
+```
+
+Net position query:
+
+```sql
+SELECT terminal_id, SUM(amount) AS net_amount
+FROM transactions
+WHERE settled = TRUE
+GROUP BY terminal_id;
+```
+
+Run settlement tests only:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+mvn -q -Dtest=SettlementServiceTest test
+```
+
+Phase 3 verification checklist:
+
+- Settlement unit coverage:
+	- `mvn -q -Dtest=SettlementServiceTest test`
+- Reconciliation + auto-reversal + settlement together:
+	- `mvn -q -Dtest=ReconciliationServiceTest,AutoReversalServiceTest,SettlementServiceTest test`
+- Full Java regression:
+	- `mvn -q test`
+- Full Python validation:
+	- `source .venv/bin/activate && python -m pytest -q python_tests/`
+
+Expected outcomes:
+
+- settlement batch is created with aggregate amount/count
+- eligible rows move to `settled=TRUE` with `settlement_date` and `batch_id`
+- net position query returns grouped amounts by `terminal_id`
+- reconciliation and auto-reversal suites stay green with no regressions
+
 To disable HEX logging, edit `docker-compose.yml` and clear the `JAVA_OPTS` value:
 
 ```yaml

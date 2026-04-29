@@ -33,6 +33,9 @@ CREATE TABLE transactions (
     final_status VARCHAR(20),
 
     is_reversal BOOLEAN DEFAULT FALSE,
+    settled BOOLEAN DEFAULT FALSE,
+    settlement_date DATE,
+    batch_id VARCHAR(32),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -43,6 +46,8 @@ CREATE TABLE transactions (
 CREATE INDEX idx_transactions_stan ON transactions(stan);
 CREATE INDEX idx_transactions_rrn ON transactions(rrn);
 CREATE INDEX idx_transactions_status ON transactions(status);
+CREATE INDEX idx_transactions_settled ON transactions(settled);
+CREATE INDEX idx_transactions_batch_id ON transactions(batch_id);
 
 -- =========================
 -- 2. TRANSACTION EVENTS
@@ -89,6 +94,19 @@ CREATE TABLE transaction_meta (
 );
 
 CREATE INDEX idx_meta_stan ON transaction_meta(stan);
+
+-- =========================
+-- 4. SETTLEMENT BATCHES
+-- =========================
+CREATE TABLE settlement_batches (
+    id BIGSERIAL PRIMARY KEY,
+    batch_id VARCHAR(32) UNIQUE,
+    total_count INT,
+    total_amount BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_settlement_batches_batch_id ON settlement_batches(batch_id);
 
 -- =========================
 -- END OF FILE
