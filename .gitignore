@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
-lib/switch-core.jar
+lib/
+python_tests/BUSINESS_CASE_RESULTS.txt
 lib/switch-core.jar
 python_tests/BUSINESS_CASE_RESULTS.txt
