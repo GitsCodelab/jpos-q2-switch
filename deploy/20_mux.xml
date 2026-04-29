@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mux name="acquirer-mux" class="org.jpos.q2.iso.QMUX">
+    <in>acquirer-channel</in>
+    <out>acquirer-channel</out>
+    <key>11,37</key>
+    <timeout>30000</timeout>
+</mux>

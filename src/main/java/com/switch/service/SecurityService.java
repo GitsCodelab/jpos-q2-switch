@@ -8,7 +8,7 @@ import org.jpos.iso.ISOMsg;
 import java.nio.charset.StandardCharsets;
 
 public class SecurityService {
-    private static final String BASE_DERIVATION_KEY = "ABCDEF1234567890";
+    private static final String BASE_DERIVATION_KEY_ENV = "BASE_DERIVATION_KEY";
     private static final String DECLINE_SECURITY_ERROR = "96";
 
     public ValidationResult validateRequestSecurity(ISOMsg request) {
@@ -43,7 +43,7 @@ public class SecurityService {
     public byte[] generateResponseMac(ISOMsg request, ISOMsg response) {
         String pinBlockHex = readFieldAsHex(request, 52);
         String ksn = safeString(request, 62);
-        String workingKey = DukptUtil.deriveWorkingKey(BASE_DERIVATION_KEY, ksn);
+        String workingKey = DukptUtil.deriveWorkingKey(readBaseDerivationKey(), ksn);
         String payload = safeMti(response)
             + "|" + safeString(response, 11)
             + "|" + safeString(response, 37)
@@ -57,7 +57,7 @@ public class SecurityService {
     public String generateRequestMacHex(ISOMsg request) {
         String pinBlockHex = readFieldAsHex(request, 52);
         String ksn = safeString(request, 62);
-        String workingKey = DukptUtil.deriveWorkingKey(BASE_DERIVATION_KEY, ksn);
+        String workingKey = DukptUtil.deriveWorkingKey(readBaseDerivationKey(), ksn);
         String payload = safeMti(request)
             + "|" + safeString(request, 11)
             + "|" + safeString(request, 37)
@@ -65,6 +65,14 @@ public class SecurityService {
             + "|" + pinBlockHex
             + "|" + ksn;
         return MacUtil.hmacSha256Hex(payload, workingKey).substring(0, 16);
+    }
+
+    private String readBaseDerivationKey() {
+        String value = System.getenv(BASE_DERIVATION_KEY_ENV);
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("Missing required environment variable: " + BASE_DERIVATION_KEY_ENV);
+        }
+        return value;
     }
 
     private String safeString(ISOMsg msg, int field) {

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<channel name="acquirer-channel" class="org.jpos.iso.channel.ASCIIChannel">
+<channel name="acquirer-channel" class="org.jpos.iso.channel.RawChannel" connect="true">
     <property name="host" value="127.0.0.1"/>
     <property name="port" value="8000"/>
-    <property name="packager" value="cfg/iso87.xml"/>
+    <property name="packager-config" value="cfg/iso87.xml"/>
 </channel>

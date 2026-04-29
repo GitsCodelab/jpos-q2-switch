@@ -4,12 +4,17 @@ import java.time.Instant;
 
 public class Transaction {
     private String mti;
+    private String originalMti;
     private String stan;
     private String rrn;
+    private String terminalId;
     private long amount;
     private String currency;
     private String responseCode;
     private boolean approved;
+    private String status;
+    private String finalStatus;
+    private boolean reversal;
     private Instant createdAt = Instant.now();
 
     public String getMti() {
@@ -62,6 +67,46 @@ public class Transaction {
 
     public boolean isApproved() {
         return approved;
+    }
+
+    public String getOriginalMti() {
+        return originalMti;
+    }
+
+    public void setOriginalMti(String originalMti) {
+        this.originalMti = originalMti;
+    }
+
+    public String getTerminalId() {
+        return terminalId;
+    }
+
+    public void setTerminalId(String terminalId) {
+        this.terminalId = terminalId;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public String getFinalStatus() {
+        return finalStatus;
+    }
+
+    public void setFinalStatus(String finalStatus) {
+        this.finalStatus = finalStatus;
+    }
+
+    public boolean isReversal() {
+        return reversal;
+    }
+
+    public void setReversal(boolean reversal) {
+        this.reversal = reversal;
     }
 
     public void setApproved(boolean approved) {

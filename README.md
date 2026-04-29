@@ -14,6 +14,7 @@ This setup is rebuilt on top of the jPOS-EE stack (`org.jpos.ee`) and keeps your
 Current active deploy files:
 
 - `deploy/10_channel.xml`
+- `deploy/20_mux.xml`
 - `deploy/30_switch.xml`
 
 ## Prerequisites
@@ -30,6 +31,187 @@ mvn clean package
 
 The package phase writes `lib/switch-core.jar`.
 
+## Docker Compose
+
+Start the switch with Docker Compose:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose up --build
+```
+
+If startup fails with `bind: address already in use` on port `9000`, stop local Q2/Java listeners first:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+pkill -f 'org.jpos.q2.Q2' || true
+fuser -k 9000/tcp || true
+docker compose down --remove-orphans
+```
+
+Then run:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose up --build -d
+```
+
+Start it in the background:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose up --build -d
+```
+
+Check container status:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose ps
+```
+
+Follow logs:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose logs -f switch
+```
+
+Stop everything:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose down
+```
+
+Notes:
+
+- The Docker image builds the Maven project inside the container, so the first `docker compose up --build` can take a few minutes.
+- Docker Compose is configured to pass JVM flags through `JAVA_OPTS`.
+- HEX logging is currently enabled in `docker-compose.yml` with `JAVA_OPTS: -Dswitch.listener.debug=true`.
+- With HEX logging enabled, the switch logs summary lines, a safe ISO dump, and raw packed ISO HEX.
+- Raw HEX can include sensitive data. Turn it off outside troubleshooting.
+
+PostgreSQL 18+ note:
+
+- Compose now mounts PostgreSQL storage at `/var/lib/postgresql` (not `/var/lib/postgresql/data`) to match the official Postgres 18+ image behavior.
+- If you previously used an older layout and see an error mentioning `/var/lib/postgresql/data (unused mount/volume)`, run this one-time reset:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose down -v
+docker volume rm jpos-q2-switch_postgres-data 2>/dev/null || true
+docker compose up --build -d
+```
+
+- This reset removes old PostgreSQL container data. If you need existing data, migrate it with `pg_upgrade` before removing volumes.
+
+Switch database environment variables (in `docker-compose.yml`):
+
+- `DB_HOST=jpos-postgresql`
+- `DB_PORT=5432`
+- `DB_NAME=jpos`
+- `DB_USER=postgres`
+- `DB_PASSWORD=postgres`
+- `DB_URL=jdbc:postgresql://jpos-postgresql:5432/jpos`
+- `DB_POOL_MAX_SIZE=10` (optional)
+- `DB_CONNECT_RETRIES=3` (optional)
+- `DB_CONNECT_RETRY_DELAY_MS=150` (optional)
+- `DB_IN_MEMORY_MIRROR=false` (optional; defaults off when DB is enabled)
+
+Java switch persistence behavior:
+
+- DB persistence is handled by Java runtime (`SwitchListener` + DAO layer) for request and response paths.
+- Java persistence uses pooled JDBC connections (HikariCP), not per-operation `DriverManager` connects.
+- Persistence is enabled by default in Java.
+- To explicitly disable DB writes (debug only), set `DB_PERSISTENCE_ENABLED=false`.
+
+Initialize schema (first run or after volume reset):
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -f /docker-entrypoint-initdb.d/db.sql
+```
+
+If your DB was created with older constraints, run this migration once:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
+	-c "WITH ranked AS (SELECT ctid, ROW_NUMBER() OVER (PARTITION BY stan, rrn ORDER BY id DESC) AS rn FROM transactions) DELETE FROM transactions t USING ranked r WHERE t.ctid=r.ctid AND r.rn>1;" \
+	-c "ALTER TABLE transactions DROP CONSTRAINT IF EXISTS uq_stan_terminal;" \
+	-c "ALTER TABLE transactions ADD CONSTRAINT uq_transactions_stan_rrn UNIQUE (stan, rrn);" \
+	-c "CREATE INDEX IF NOT EXISTS idx_transactions_stan ON transactions(stan);" \
+	-c "CREATE INDEX IF NOT EXISTS idx_transactions_rrn ON transactions(rrn);"
+```
+
+Add lifecycle dedupe constraints for event/meta tables (one-time migration):
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
+	-c "WITH ranked AS (SELECT ctid, ROW_NUMBER() OVER (PARTITION BY stan, rrn, event_type ORDER BY id DESC) AS rn FROM transaction_events) DELETE FROM transaction_events e USING ranked r WHERE e.ctid=r.ctid AND r.rn>1;" \
+	-c "ALTER TABLE transaction_events DROP CONSTRAINT IF EXISTS uq_transaction_events_stan_rrn_type;" \
+	-c "ALTER TABLE transaction_events ADD CONSTRAINT uq_transaction_events_stan_rrn_type UNIQUE (stan, rrn, event_type);" \
+	-c "WITH ranked AS (SELECT ctid, ROW_NUMBER() OVER (PARTITION BY stan ORDER BY id DESC) AS rn FROM transaction_meta) DELETE FROM transaction_meta m USING ranked r WHERE m.ctid=r.ctid AND r.rn>1;" \
+	-c "ALTER TABLE transaction_meta DROP CONSTRAINT IF EXISTS uq_transaction_meta_stan;" \
+	-c "ALTER TABLE transaction_meta ADD CONSTRAINT uq_transaction_meta_stan UNIQUE (stan);"
+```
+
+If `transactions.amount` is still `numeric(15,2)` in an older DB, convert it to minor-unit `BIGINT`:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
+  -c "ALTER TABLE transactions ALTER COLUMN amount TYPE BIGINT USING ROUND(amount * 100)::BIGINT;"
+```
+
+After this migration, Java persists `amount` as ISO minor units directly (example: `10000` means `100.00`).
+
+Persistence model:
+
+- `transactions`: one row per ISO flow (`MTI`, `STAN`, `RRN`, `terminal_id`, amount, `rc`, `status`, `final_status`)
+- `transaction_events`: detailed request/response payload snapshots with event type (`REQUEST`, `LOCAL_RESPONSE`, `SECURITY_DECLINE`, `MUX_RESPONSE`, etc.)
+- `transaction_meta`: supporting metadata (acquirer IDs, processing code)
+
+Lifecycle status behavior:
+
+- Incoming request insert starts with: `status=REQUEST_RECEIVED`, `final_status=PENDING`.
+- Outgoing response update always sets `rc`, `status`, and `final_status` together (`UPDATE ... rc=?, status=?, final_status=?`).
+- `RC=96` (or `SECURITY_DECLINE`) maps to `status=SECURITY_DECLINE`.
+- `RC=91` (or timeout event) maps to `status=TIMEOUT` and `final_status=TIMEOUT`.
+- `RC=00` maps to `status=APPROVED`, other decline RCs map to `status=DECLINED`.
+
+Idempotency and uniqueness:
+
+- `transaction_events` is deduplicated by `UNIQUE (stan, rrn, event_type)`.
+- `transaction_meta` is deduplicated by `UNIQUE (stan)` and Java uses `ON CONFLICT (stan)` upsert semantics.
+
+Verification query examples:
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos -c "SELECT id,stan,rrn,mti,rc,status,final_status,created_at FROM transactions ORDER BY id DESC LIMIT 10;"
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos -c "SELECT id,stan,event_type,left(request_iso,120) AS request_head,left(response_iso,120) AS response_head,created_at FROM transaction_events ORDER BY id DESC LIMIT 10;"
+```
+
+To disable HEX logging, edit `docker-compose.yml` and clear the `JAVA_OPTS` value:
+
+```yaml
+JAVA_OPTS:
+```
+
+To run full validation in Docker without creating root-owned artifacts in the workspace:
+
+```bash
+bash docker/run-tests-docker.sh
+```
+
+This script runs containers with your host UID/GID and executes:
+
+- `mvn -q clean test`
+- `python3 -m pytest -q python_tests`
+
 ## Python Test Layer (Validation Only)
 
 Business logic remains in Java (jPOS + Q2). Python is used only to validate setup and business-case expectations.
@@ -39,6 +221,16 @@ Business logic remains in Java (jPOS + Q2). Python is used only to validate setu
 ```
 
 This command runs Python-based validation scenarios mapped to the business-case matrix.
+
+DB persistence verification test (runtime ISO vs PostgreSQL rows):
+
+```bash
+/home/samehabib/jpos-q2-switch/.venv/bin/python -m pytest -q python_tests/test_full_setup_python.py -k persisted
+```
+
+The persistence test sends a real ISO 0200 probe to Q2, expects a 0210/96 reply,
+and verifies the latest DB rows contain matching `STAN`, `RRN`, terminal, response
+code, and ISO payload content.
 
 Python test execution also generates:
 
@@ -83,3 +275,22 @@ Area status summary (from `python_tests/BUSINESS_CASE_RESULTS.md`):
 - Integrity Protection: PASS
 - Replay Protection: PASS
 - Robustness: PASS
+
+## Routing Architecture
+
+Current runtime path:
+
+- ATM
+- QServer
+- SwitchListener
+- QMUX (`acquirer-mux`)
+- Channel (`acquirer-channel`)
+- Upstream acquirer / scheme
+
+MUX routing is configured in:
+
+- `deploy/20_mux.xml`
+
+Channel packager property is configured as:
+
+- `packager-config=cfg/iso87.xml`
