@@ -67,7 +67,8 @@ public class SwitchListener extends QBeanSupport implements ISORequestListener {
             // ---------------- MUX ROUTING ----------------
             ISOMsg muxResponse = requestThroughMux(request);
             if (muxResponse != null) {
-                safeSend(source, request, muxResponse, "MUX RESPONSE", "MUX_RESPONSE");
+                String eventType = "91".equals(muxResponse.getString(39)) ? "TIMEOUT" : "MUX_RESPONSE";
+                safeSend(source, request, muxResponse, "MUX RESPONSE", eventType);
                 return true;
             }
 

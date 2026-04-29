@@ -2,6 +2,7 @@ package com.qswitch.listener;
 
 import com.qswitch.dao.EventDAO;
 import com.qswitch.dao.TransactionDAO;
+import com.qswitch.model.Transaction;
 import com.qswitch.service.SecurityService;
 import com.qswitch.service.TransactionService;
 import org.jpos.iso.ISOException;
@@ -21,8 +22,9 @@ class SwitchListenerTest {
 
     @Test
     void shouldSendSecurityDeclineWhenValidationFails() throws Exception {
+        TransactionDAO transactionDAO = new TransactionDAO();
         SwitchListener listener = new SwitchListener(
-            new TransactionService(new TransactionDAO(), new EventDAO()),
+            new TransactionService(transactionDAO, new EventDAO()),
             new StubSecurityService(SecurityService.ValidationResult.invalid("96", "MAC mismatch"), false, null)
         );
 
@@ -37,6 +39,12 @@ class SwitchListenerTest {
         assertEquals("96", source.lastSent.getString(39));
         assertEquals("123456", source.lastSent.getString(11));
         assertEquals("654321123456", source.lastSent.getString(37));
+
+        Transaction persisted = transactionDAO.findByStanAndRrn("123456", "654321123456").orElse(null);
+        assertNotNull(persisted);
+        assertEquals("96", persisted.getResponseCode());
+        assertEquals("SECURITY_DECLINE", persisted.getStatus());
+        assertEquals("SECURITY_DECLINE", persisted.getFinalStatus());
     }
 
     @Test
@@ -130,8 +138,9 @@ class SwitchListenerTest {
 
     @Test
     void shouldSend91WhenMuxReturnsNullTimeout() throws Exception {
+        TransactionDAO transactionDAO = new TransactionDAO();
         SwitchListener listener = new MuxInjectableSwitchListener(
-            new TransactionService(new TransactionDAO(), new EventDAO()),
+            new TransactionService(transactionDAO, new EventDAO()),
             new StubSecurityService(SecurityService.ValidationResult.valid(), false, null),
             new StubMux(null, false)
         );
@@ -145,6 +154,12 @@ class SwitchListenerTest {
         assertNotNull(source.lastSent);
         assertEquals("0210", source.lastSent.getMTI());
         assertEquals("91", source.lastSent.getString(39));
+
+        Transaction persisted = transactionDAO.findByStanAndRrn("555555", "555555555555").orElse(null);
+        assertNotNull(persisted);
+        assertEquals("91", persisted.getResponseCode());
+        assertEquals("TIMEOUT", persisted.getStatus());
+        assertEquals("TIMEOUT", persisted.getFinalStatus());
     }
 
     @Test

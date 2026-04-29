@@ -4,7 +4,6 @@ import com.qswitch.dao.EventDAO;
 import com.qswitch.dao.DatabaseSupport;
 import com.qswitch.dao.TransactionDAO;
 import com.qswitch.dao.TransactionMetaDAO;
-import com.qswitch.model.Event;
 import com.qswitch.model.Transaction;
 import org.jpos.iso.ISOException;
 import org.jpos.iso.ISOMsg;
@@ -35,19 +34,6 @@ public class TransactionService {
     public Transaction handleAuthorization(String stan, String rrn, long amount) {
         Optional<Transaction> existing = transactionDAO.findByStanAndRrn(stan, rrn);
         if (existing.isPresent() && existing.get().getResponseCode() != null) {
-            eventDAO.save(new Event("REPLAY_DETECTED", "Replay detected for stan=" + stan + " rrn=" + rrn));
-            if (DatabaseSupport.isJdbcEnabled()) {
-                withTransaction(connection -> eventDAO.saveIsoEvent(
-                    connection,
-                    stan,
-                    rrn,
-                    existing.get().getMti(),
-                    "REPLAY_DETECTED",
-                    "Replay detected for stan=" + stan + " rrn=" + rrn,
-                    null,
-                    existing.get().getResponseCode()
-                ));
-            }
             return existing.get();
         }
 
@@ -58,31 +44,22 @@ public class TransactionService {
         transaction.setRrn(rrn);
         transaction.setAmount(amount);
         transaction.setCurrency("840");
-        transaction.setStatus("AUTHORIZED");
-        transaction.setFinalStatus("LOCAL_RESPONSE");
 
         if (amount > 0) {
             transaction.setApproved(true);
             transaction.setResponseCode("00");
-            eventDAO.save(new Event("AUTH_APPROVED", "Approved amount=" + amount + " stan=" + stan));
+            transaction.setStatus("APPROVED");
+            transaction.setFinalStatus("LOCAL_RESPONSE");
         } else {
             transaction.setApproved(false);
             transaction.setResponseCode("13");
-            eventDAO.save(new Event("AUTH_DECLINED", "Declined invalid amount=" + amount + " stan=" + stan));
+            transaction.setStatus("DECLINED");
+            transaction.setFinalStatus("LOCAL_RESPONSE");
         }
 
         if (!DatabaseSupport.isJdbcEnabled()) {
             return transactionDAO.save(transaction);
         }
-
-        withTransaction(connection -> {
-            transactionDAO.save(connection, transaction);
-            String eventType = transaction.isApproved() ? "AUTH_APPROVED" : "AUTH_DECLINED";
-            String eventMessage = transaction.isApproved()
-                ? "Approved amount=" + amount + " stan=" + stan
-                : "Declined invalid amount=" + amount + " stan=" + stan;
-            eventDAO.saveIsoEvent(connection, stan, rrn, transaction.getMti(), eventType, eventMessage, null, transaction.getResponseCode());
-        });
         return transaction;
     }
 
@@ -123,17 +100,31 @@ public class TransactionService {
         String stan = fieldOrDefault(response, 11, fieldOrDefault(request, 11, "000000"));
         String rrn = fieldOrDefault(response, 37, fieldOrDefault(request, 37, "000000000000"));
         String rc = fieldOrNull(response, 39);
+        String status = mapRcToStatus(rc, eventType);
 
         if (!DatabaseSupport.isJdbcEnabled()) {
-            transactionDAO.updateResponse(stan, rrn, rc, eventType);
+            transactionDAO.updateResponse(stan, rrn, rc, status, eventType);
             return;
         }
 
         withTransaction(connection -> {
-            transactionDAO.updateResponse(connection, stan, rrn, rc, eventType);
+            transactionDAO.updateResponse(connection, stan, rrn, rc, status, eventType);
             String responseIso = dumpIso(response);
             eventDAO.saveIsoEvent(connection, stan, rrn, fieldOrNull(response, 0), eventType, null, responseIso, rc);
         });
+    }
+
+    private String mapRcToStatus(String rc, String eventType) {
+        if ("TIMEOUT".equals(eventType) || "91".equals(rc)) {
+            return "TIMEOUT";
+        }
+        if ("SECURITY_DECLINE".equals(eventType) || "96".equals(rc)) {
+            return "SECURITY_DECLINE";
+        }
+        if ("00".equals(rc)) {
+            return "APPROVED";
+        }
+        return "DECLINED";
     }
 
     private void withTransaction(SqlWork work) {

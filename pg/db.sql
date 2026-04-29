@@ -83,7 +83,9 @@ CREATE TABLE transaction_meta (
 
     processing_code VARCHAR(6),
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_transaction_meta_stan UNIQUE (stan)
 );
 
 CREATE INDEX idx_meta_stan ON transaction_meta(stan);

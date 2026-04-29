@@ -145,6 +145,19 @@ docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
 	-c "CREATE INDEX IF NOT EXISTS idx_transactions_rrn ON transactions(rrn);"
 ```
 
+Add lifecycle dedupe constraints for event/meta tables (one-time migration):
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+docker compose exec -T jpos-postgresql psql -U postgres -d jpos \
+	-c "WITH ranked AS (SELECT ctid, ROW_NUMBER() OVER (PARTITION BY stan, rrn, event_type ORDER BY id DESC) AS rn FROM transaction_events) DELETE FROM transaction_events e USING ranked r WHERE e.ctid=r.ctid AND r.rn>1;" \
+	-c "ALTER TABLE transaction_events DROP CONSTRAINT IF EXISTS uq_transaction_events_stan_rrn_type;" \
+	-c "ALTER TABLE transaction_events ADD CONSTRAINT uq_transaction_events_stan_rrn_type UNIQUE (stan, rrn, event_type);" \
+	-c "WITH ranked AS (SELECT ctid, ROW_NUMBER() OVER (PARTITION BY stan ORDER BY id DESC) AS rn FROM transaction_meta) DELETE FROM transaction_meta m USING ranked r WHERE m.ctid=r.ctid AND r.rn>1;" \
+	-c "ALTER TABLE transaction_meta DROP CONSTRAINT IF EXISTS uq_transaction_meta_stan;" \
+	-c "ALTER TABLE transaction_meta ADD CONSTRAINT uq_transaction_meta_stan UNIQUE (stan);"
+```
+
 If `transactions.amount` is still `numeric(15,2)` in an older DB, convert it to minor-unit `BIGINT`:
 
 ```bash
@@ -160,6 +173,19 @@ Persistence model:
 - `transactions`: one row per ISO flow (`MTI`, `STAN`, `RRN`, `terminal_id`, amount, `rc`, `status`, `final_status`)
 - `transaction_events`: detailed request/response payload snapshots with event type (`REQUEST`, `LOCAL_RESPONSE`, `SECURITY_DECLINE`, `MUX_RESPONSE`, etc.)
 - `transaction_meta`: supporting metadata (acquirer IDs, processing code)
+
+Lifecycle status behavior:
+
+- Incoming request insert starts with: `status=REQUEST_RECEIVED`, `final_status=PENDING`.
+- Outgoing response update always sets `rc`, `status`, and `final_status` together (`UPDATE ... rc=?, status=?, final_status=?`).
+- `RC=96` (or `SECURITY_DECLINE`) maps to `status=SECURITY_DECLINE`.
+- `RC=91` (or timeout event) maps to `status=TIMEOUT` and `final_status=TIMEOUT`.
+- `RC=00` maps to `status=APPROVED`, other decline RCs map to `status=DECLINED`.
+
+Idempotency and uniqueness:
+
+- `transaction_events` is deduplicated by `UNIQUE (stan, rrn, event_type)`.
+- `transaction_meta` is deduplicated by `UNIQUE (stan)` and Java uses `ON CONFLICT (stan)` upsert semantics.
 
 Verification query examples:
 

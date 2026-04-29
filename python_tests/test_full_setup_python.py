@@ -713,7 +713,7 @@ def test_runtime_iso_roundtrip_is_persisted_in_jpos_db() -> None:
     assert terminal_id == "TERM0001"
     assert mti == "0200"
     assert rc == "96"
-    assert status == "REQUEST_RECEIVED"
+    assert status == "SECURITY_DECLINE"
     assert final_status == "SECURITY_DECLINE"
 
     request_iso = _run_postgres_query(
@@ -768,7 +768,7 @@ def test_duplicate_stan_persists_distinct_rows_by_rrn() -> None:
 
     rows = _run_postgres_query(
         f"""
-        SELECT rrn, rc, final_status
+        SELECT rrn, rc, status, final_status
         FROM transactions
         WHERE stan='{shared_stan}' AND rrn IN ('{rrn_1}', '{rrn_2}')
         ORDER BY rrn ASC;
@@ -785,6 +785,7 @@ def test_duplicate_stan_persists_distinct_rows_by_rrn() -> None:
     for row in parsed:
         assert row[1] == "96"
         assert row[2] == "SECURITY_DECLINE"
+        assert row[3] == "SECURITY_DECLINE"
 
     for rrn in (rrn_1, rrn_2):
         event_counts = _run_postgres_query(

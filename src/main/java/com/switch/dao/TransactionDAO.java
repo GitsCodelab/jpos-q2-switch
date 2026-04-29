@@ -87,40 +87,43 @@ public class TransactionDAO {
         return transactions.size();
     }
 
-    public void updateResponse(String stan, String rrn, String rc, String finalStatus) {
+    public void updateResponse(String stan, String rrn, String rc, String status, String finalStatus) {
         if (!jdbcEnabled) {
             Transaction tx = transactions.get(buildKey(stan, rrn));
             if (tx != null) {
                 tx.setResponseCode(rc);
+                tx.setStatus(status);
                 tx.setFinalStatus(finalStatus);
             }
             return;
         }
 
         try (Connection connection = DatabaseSupport.getConnection()) {
-            updateResponse(connection, stan, rrn, rc, finalStatus);
+            updateResponse(connection, stan, rrn, rc, status, finalStatus);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update transaction response", e);
         }
     }
 
-    public void updateResponse(Connection connection, String stan, String rrn, String rc, String finalStatus) {
+    public void updateResponse(Connection connection, String stan, String rrn, String rc, String status, String finalStatus) {
         if (!jdbcEnabled) {
             Transaction tx = transactions.get(buildKey(stan, rrn));
             if (tx != null) {
                 tx.setResponseCode(rc);
+                tx.setStatus(status);
                 tx.setFinalStatus(finalStatus);
             }
             return;
         }
 
-        String sql = "UPDATE transactions SET rc=?, final_status=?, updated_at=NOW() "
+        String sql = "UPDATE transactions SET rc=?, status=?, final_status=?, updated_at=NOW() "
             + "WHERE stan=? AND rrn=?";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, rc);
-            ps.setString(2, finalStatus);
-            ps.setString(3, stan);
-            ps.setString(4, rrn);
+            ps.setString(2, status);
+            ps.setString(3, finalStatus);
+            ps.setString(4, stan);
+            ps.setString(5, rrn);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to update transaction response", e);

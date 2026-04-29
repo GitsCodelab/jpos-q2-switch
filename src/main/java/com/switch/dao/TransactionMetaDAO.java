@@ -24,7 +24,9 @@ public class TransactionMetaDAO {
             return;
         }
 
-        String sql = "INSERT INTO transaction_meta (stan, acquirer_id, issuer_id, processing_code) VALUES (?, ?, ?, ?)";
+        String sql = "INSERT INTO transaction_meta (stan, acquirer_id, issuer_id, processing_code) VALUES (?, ?, ?, ?) "
+            + "ON CONFLICT (stan) DO UPDATE SET "
+            + "acquirer_id=EXCLUDED.acquirer_id, issuer_id=EXCLUDED.issuer_id, processing_code=EXCLUDED.processing_code";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, stan);
             ps.setString(2, acquirerId);
