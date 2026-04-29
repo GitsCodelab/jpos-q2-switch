@@ -467,6 +467,19 @@ mvn -q -DskipTests org.codehaus.mojo:exec-maven-plugin:3.5.0:java \
 	-Dexec.mainClass=com.qswitch.settlement.SettlementRunner
 ```
 
+One command (settlement batch + net settlement):
+
+```bash
+cd /home/samehabib/jpos-q2-switch
+./run-full-settlement.sh
+```
+
+This command will:
+
+- ensure required compose services are up
+- run settlement batch creation
+- run bank-level net settlement and persist into `net_settlement`
+
 Net position query by terminal:
 
 ```sql

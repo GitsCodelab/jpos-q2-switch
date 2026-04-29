@@ -21,6 +21,7 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SettlementServiceTest {
@@ -74,6 +75,61 @@ class SettlementServiceTest {
         assertEquals(2000L, positions.get(0).getNetAmount());
         assertEquals("TERM-B", positions.get(1).getTerminalId());
         assertEquals(900L, positions.get(1).getNetAmount());
+    }
+
+    @Test
+    void shouldRunSettlementFlowAndReflectBatchInNetPositions() {
+        StubDataSource ds = new StubDataSource();
+        ds.addTransaction(20L, "APPROVED", false, "TERM-A", 1000L);
+        ds.addTransaction(21L, "AUTHORIZED", false, "TERM-B", 500L);
+        ds.addTransaction(22L, "APPROVED", true, "TERM-A", 200L);
+        ds.addTransaction(23L, "DECLINED", false, "TERM-C", 700L);
+
+        SettlementService service = new SettlementService(ds);
+        SettlementService.SettlementBatchSummary summary = service.runSettlement();
+        List<SettlementService.NetPosition> positions = service.getNetPositions();
+
+        assertEquals(2, summary.getTotalCount());
+        assertEquals(1500L, summary.getTotalAmount());
+        assertEquals(1, ds.savedBatches.size());
+
+        assertTrue(ds.getTx(20L).settled);
+        assertTrue(ds.getTx(21L).settled);
+        assertTrue(ds.getTx(22L).settled);
+        assertFalse(ds.getTx(23L).settled);
+
+        assertEquals(summary.getBatchId(), ds.getTx(20L).batchId);
+        assertEquals(summary.getBatchId(), ds.getTx(21L).batchId);
+
+        assertEquals(2, positions.size());
+        assertEquals("TERM-A", positions.get(0).getTerminalId());
+        assertEquals(1200L, positions.get(0).getNetAmount());
+        assertEquals("TERM-B", positions.get(1).getTerminalId());
+        assertEquals(500L, positions.get(1).getNetAmount());
+    }
+
+    @Test
+    void shouldCreateEmptyBatchWhenNoEligibleTransactions() {
+        StubDataSource ds = new StubDataSource();
+        ds.addTransaction(30L, "DECLINED", false, "TERM-A", 1000L);
+        ds.addTransaction(31L, "REVERSED", false, "TERM-B", 2000L);
+        ds.addTransaction(32L, "APPROVED", true, "TERM-C", 3000L);
+
+        SettlementService service = new SettlementService(ds);
+        SettlementService.SettlementBatchSummary summary = service.runSettlement();
+
+        assertNotNull(summary.getBatchId());
+        assertEquals(0, summary.getTotalCount());
+        assertEquals(0L, summary.getTotalAmount());
+        assertEquals(1, ds.savedBatches.size());
+        assertEquals(0, ds.savedBatches.get(0).totalCount);
+        assertEquals(0L, ds.savedBatches.get(0).totalAmount);
+
+        assertFalse(ds.getTx(30L).settled);
+        assertFalse(ds.getTx(31L).settled);
+        assertTrue(ds.getTx(32L).settled);
+        assertNull(ds.getTx(30L).batchId);
+        assertNull(ds.getTx(31L).batchId);
     }
 
     private static final class TxRow {

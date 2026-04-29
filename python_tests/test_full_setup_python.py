@@ -1204,3 +1204,107 @@ def test_net_settlement_financial_computation_logic() -> None:
     assert bank_a_net < 0, "Debtor should have negative balance"
     assert bank_b_net > 0, "Creditor should have positive balance"
     assert abs(bank_a_net) == abs(bank_b_net), "Obligations must be equal magnitude"
+
+
+def test_transaction_to_settlement_batch_and_net_settlement_flow() -> None:
+    """Validate full flow for real transactions through settlement and net settlement.
+
+    Flow validated:
+    1. Insert test transactions (approved/authorized + declined)
+    2. Run one-command settlement flow runner
+    3. Verify eligible transactions become settled with a batch_id
+    4. Verify settlement_batches row exists for produced batch
+    5. Verify net_settlement rows exist and conserve money (sum = 0)
+    """
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not available")
+
+    run_script = PROJECT_ROOT / "run-full-settlement.sh"
+    if not run_script.exists():
+        pytest.skip("run-full-settlement.sh not found")
+
+    suffix = str(int(time.time_ns()))[-8:]
+    stan_a = f"91{suffix[-4:]}"
+    stan_b = f"92{suffix[-4:]}"
+    stan_c = f"93{suffix[-4:]}"
+    rrn_a = ("88" + suffix + "01")[:12]
+    rrn_b = ("88" + suffix + "02")[:12]
+    rrn_c = ("88" + suffix + "03")[:12]
+
+    cleanup_sql = (
+        "DELETE FROM transactions "
+        f"WHERE (stan='{stan_a}' AND rrn='{rrn_a}') "
+        f"OR (stan='{stan_b}' AND rrn='{rrn_b}') "
+        f"OR (stan='{stan_c}' AND rrn='{rrn_c}');"
+    )
+    _run_postgres_query(cleanup_sql)
+
+    insert_sql = f"""
+        INSERT INTO transactions
+            (stan, rrn, terminal_id, mti, amount, status, issuer_id, acquirer_id, settled)
+        VALUES
+            ('{stan_a}', '{rrn_a}', 'TERM0001', '0200', 1100, 'APPROVED',   'BANK_A', 'BANK_B', FALSE),
+            ('{stan_b}', '{rrn_b}', 'TERM0002', '0200',  900, 'AUTHORIZED', 'BANK_B', 'BANK_A', FALSE),
+            ('{stan_c}', '{rrn_c}', 'TERM0003', '0200',  700, 'DECLINED',   'BANK_C', 'BANK_A', FALSE);
+    """
+    _run_postgres_query(insert_sql)
+
+    run = subprocess.run(
+        ["bash", "-lc", "./run-full-settlement.sh"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr or run.stdout
+
+    tx_rows = _run_postgres_query(
+        f"""
+        SELECT stan, rrn, settled, COALESCE(batch_id, '') AS batch_id
+        FROM transactions
+        WHERE (stan='{stan_a}' AND rrn='{rrn_a}')
+           OR (stan='{stan_b}' AND rrn='{rrn_b}')
+           OR (stan='{stan_c}' AND rrn='{rrn_c}')
+        ORDER BY stan;
+        """
+    )
+    assert tx_rows, "Expected test transactions to exist after settlement run"
+
+    by_stan: dict[str, tuple[str, str, str, str]] = {}
+    for line in tx_rows.splitlines():
+        stan, rrn, settled, batch_id = line.split("|")
+        by_stan[stan] = (stan, rrn, settled, batch_id)
+
+    assert by_stan[stan_a][2] == "t", "Approved transaction should be settled"
+    assert by_stan[stan_b][2] == "t", "Authorized transaction should be settled"
+    assert by_stan[stan_c][2] == "f", "Declined transaction must remain unsettled"
+
+    batch_a = by_stan[stan_a][3]
+    batch_b = by_stan[stan_b][3]
+    assert batch_a, "Expected batch_id for approved transaction"
+    assert batch_b, "Expected batch_id for authorized transaction"
+    assert batch_a == batch_b, "Eligible transactions in same run should share one batch_id"
+
+    batch_row = _run_postgres_query(
+        f"""
+        SELECT batch_id, total_count, total_amount
+        FROM settlement_batches
+        WHERE batch_id='{batch_a}'
+        LIMIT 1;
+        """
+    )
+    assert batch_row, "settlement_batches row missing for generated batch_id"
+
+    net_stats = _run_postgres_query(
+        f"""
+        SELECT COUNT(*)::int, COALESCE(SUM(net_amount), 0)
+        FROM net_settlement
+        WHERE batch_id='{batch_a}';
+        """
+    )
+    assert net_stats, "Expected net_settlement rows for generated batch"
+    net_count_str, net_sum_str = net_stats.split("|")
+    assert int(net_count_str) > 0, "Expected at least one net_settlement row"
+    assert int(net_sum_str) == 0, "Net settlement must conserve money (sum=0)"
+
+    _run_postgres_query(cleanup_sql)

@@ -20,7 +20,7 @@ public class SettlementService {
     }
 
     public SettlementBatchSummary runSettlement() {
-        String batchId = UUID.randomUUID().toString();
+        String batchId = UUID.randomUUID().toString().replace("-", "");
 
         String selectSql = """
             SELECT id, amount
